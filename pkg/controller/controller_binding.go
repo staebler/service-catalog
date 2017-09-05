@@ -22,6 +22,7 @@ import (
 
 	"github.com/golang/glog"
 	osb "github.com/pmorie/go-open-service-broker-client/v2"
+	"k8s.io/apimachinery/pkg/runtime"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 
 	"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1"
@@ -203,8 +204,9 @@ func (c *controller) reconcileServiceInstanceCredential(binding *v1alpha1.Servic
 		glog.V(4).Infof("Adding/Updating ServiceInstanceCredential %v/%v", binding.Namespace, binding.Name)
 
 		var parameters map[string]interface{}
+		var parametersWithSecretsRedacted map[string]interface{}
 		if binding.Spec.Parameters != nil || binding.Spec.ParametersFrom != nil {
-			parameters, err = buildParameters(c.kubeClient, binding.Namespace, binding.Spec.ParametersFrom, binding.Spec.Parameters)
+			parameters, parametersWithSecretsRedacted, err = buildParameters(c.kubeClient, binding.Namespace, binding.Spec.ParametersFrom, binding.Spec.Parameters)
 			if err != nil {
 				s := fmt.Sprintf("Failed to prepare ServiceInstanceCredential parameters\n%s\n %s", binding.Spec.Parameters, err)
 				glog.Warning(s)
@@ -253,6 +255,56 @@ func (c *controller) reconcileServiceInstanceCredential(binding *v1alpha1.Servic
 				s,
 			)
 			return c.updateServiceInstanceCredentialStatus(toUpdate)
+		}
+
+		parametersChecksum := ""
+		if parameters != nil {
+			parametersChecksum, err = generateChecksumOfParameters(parameters)
+			if err != nil {
+				s := fmt.Sprintf(`Failed to generate the parameters checksum to store in the Status of ServiceInstanceCredential "%s/%s": %s`, binding.Namespace, binding.Name, err)
+				glog.Info(s)
+				c.recorder.Eventf(binding, api.EventTypeWarning, errorWithParameters, s)
+				c.setServiceInstanceCredentialCondition(
+					toUpdate,
+					v1alpha1.ServiceInstanceCredentialConditionReady,
+					v1alpha1.ConditionFalse,
+					errorWithParameters,
+					s)
+				if err := c.updateServiceInstanceCredentialStatus(toUpdate); err != nil {
+					return err
+				}
+				return err
+			}
+		}
+
+		var rawParametersWithRedaction *runtime.RawExtension
+		if parametersWithSecretsRedacted != nil {
+			marshalledParametersWithRedaction, err := MarshalRawParameters(parametersWithSecretsRedacted)
+			if err != nil {
+				s := fmt.Sprintf(`Failed to marshal the parameters to store in the Status of ServiceInstanceCredential "%s/%s": %s`, binding.Namespace, binding.Name, err)
+				glog.Info(s)
+				c.recorder.Eventf(binding, api.EventTypeWarning, errorWithParameters, s)
+				c.setServiceInstanceCredentialCondition(
+					toUpdate,
+					v1alpha1.ServiceInstanceCredentialConditionReady,
+					v1alpha1.ConditionFalse,
+					errorWithParameters,
+					s)
+				if err := c.updateServiceInstanceCredentialStatus(toUpdate); err != nil {
+					return err
+				}
+				return err
+			}
+
+			rawParametersWithRedaction = &runtime.RawExtension{
+				Raw: marshalledParametersWithRedaction,
+			}
+		}
+
+		toUpdate.Status.InProgressProperties = &v1alpha1.ServiceInstanceCredentialPropertiesState{
+			Parameters:         rawParametersWithRedaction,
+			ParametersChecksum: parametersChecksum,
+			UserInfo:           toUpdate.Spec.UserInfo,
 		}
 
 		appGUID := string(ns.UID)
@@ -364,6 +416,8 @@ func (c *controller) reconcileServiceInstanceCredential(binding *v1alpha1.Servic
 			c.updateServiceInstanceCredentialStatus(toUpdate)
 			return err
 		}
+
+		toUpdate.Status.ExternalProperties = toUpdate.Status.InProgressProperties
 
 		err = c.injectServiceInstanceCredential(binding, response.Credentials)
 		if err != nil {
@@ -573,6 +627,7 @@ func (c *controller) reconcileServiceInstanceCredential(binding *v1alpha1.Servic
 			"The binding was deleted successfully",
 		)
 		c.clearServiceInstanceCredentialCurrentOperation(toUpdate)
+		toUpdate.Status.ExternalProperties = nil
 		if err := c.updateServiceInstanceCredentialStatus(toUpdate); err != nil {
 			return err
 		}
@@ -873,4 +928,5 @@ func (c *controller) clearServiceInstanceCredentialCurrentOperation(toUpdate *v1
 	toUpdate.Status.CurrentOperation = ""
 	toUpdate.Status.OperationStartTime = nil
 	toUpdate.Status.ReconciledGeneration = toUpdate.Generation
+	toUpdate.Status.InProgressProperties = nil
 }

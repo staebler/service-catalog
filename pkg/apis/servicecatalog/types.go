@@ -440,6 +440,14 @@ type ServiceInstanceStatus struct {
 
 	// OperationStartTime is the time at which the current operation began.
 	OperationStartTime *metav1.Time
+
+	// InProgressProperties is the properties state for which there is a
+	// provision or update action in progress.
+	InProgressProperties *ServiceInstancePropertiesState
+
+	// ExternalProperties is the properites state which the broker knows
+	// about.
+	ExternalProperties *ServiceInstancePropertiesState
 }
 
 // ServiceInstanceCondition contains condition information about an Instance.
@@ -491,6 +499,25 @@ const (
 	// being Deprovisioned.
 	ServiceInstanceOperationDeprovision ServiceInstanceOperation = "Deprovision"
 )
+
+// ServiceInstancePropertiesState is the state of a ServiceInstance that
+// the ServiceBroker knows about.
+type ServiceInstancePropertiesState struct {
+	// PlanName is the name of the plan that the broker knows this
+	// ServiceInstance to be on.
+	PlanName string
+
+	// Parameters is a blob of the parameters and their values that the broker
+	// knows about for this ServiceInstance.  If a parameter was sourced from
+	// a secret, its value will be "<redacted>" in this blob.
+	Parameters *runtime.RawExtension
+
+	// ParametersChecksum is the checksum of the parameters that were sent.
+	ParametersChecksum string
+
+	// UserInfo is information about the user that made the request.
+	UserInfo *UserInfo
+}
 
 // ServiceInstanceCredentialList is a list of ServiceInstanceCredentials.
 type ServiceInstanceCredentialList struct {
@@ -575,6 +602,14 @@ type ServiceInstanceCredentialStatus struct {
 
 	// OperationStartTime is the time at which the current operation began.
 	OperationStartTime *metav1.Time
+
+	// InProgressProperties is the properties state for which there is a bind
+	// operation in progress.
+	InProgressProperties *ServiceInstanceCredentialPropertiesState
+
+	// ExternalProperties is the properties state that the broker knows
+	// about for this ServiceInstanceCredential.
+	ExternalProperties *ServiceInstanceCredentialPropertiesState
 }
 
 // ServiceInstanceCredentialCondition condition information for a ServiceInstanceCredential.
@@ -627,6 +662,21 @@ const (
 const (
 	FinalizerServiceCatalog string = "kubernetes-incubator/service-catalog"
 )
+
+// ServiceInstanceCredentialPropertiesState is the state of a
+// ServiceInstanceCredential that the ServiceBroker knows about.
+type ServiceInstanceCredentialPropertiesState struct {
+	// Parameters is a blob of the parameters and their values that the broker
+	// knows about for this ServiceInstanceCredential.  If a parameter was
+	// sourced from a secret, its value will be "<redacted>" in this blob.
+	Parameters *runtime.RawExtension
+
+	// ParametersChecksum is the checksum of the parameters that were sent.
+	ParametersChecksum string
+
+	// UserInfo is information about the user that made the request.
+	UserInfo *UserInfo
+}
 
 // ParametersFromSource represents the source of a set of Parameters
 type ParametersFromSource struct {

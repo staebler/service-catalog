@@ -720,6 +720,36 @@ func GetOpenAPIDefinitions(ref openapi.ReferenceCallback) map[string]openapi.Ope
 			Dependencies: []string{
 				"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstanceCredential", "k8s.io/apimachinery/pkg/apis/meta/v1.ListMeta"},
 		},
+		"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstanceCredentialPropertiesState": {
+			Schema: spec.Schema{
+				SchemaProps: spec.SchemaProps{
+					Description: "ServiceInstanceCredentialPropertiesState is the state of a ServiceInstanceCredential that the ServiceBroker knows about.",
+					Properties: map[string]spec.Schema{
+						"parameters": {
+							SchemaProps: spec.SchemaProps{
+								Description: "Parameters is a blob of the parameters and their values that the broker knows about for this ServiceInstanceCredential.  If a parameter was sourced from a secret, its value will be \"<redacted>\" in this blob.",
+								Ref:         ref("k8s.io/apimachinery/pkg/runtime.RawExtension"),
+							},
+						},
+						"parameterChecksum": {
+							SchemaProps: spec.SchemaProps{
+								Description: "ParametersChecksum is the checksum of the parameters that were sent.",
+								Type:        []string{"string"},
+								Format:      "",
+							},
+						},
+						"userInfo": {
+							SchemaProps: spec.SchemaProps{
+								Description: "UserInfo is information about the user that made the request.",
+								Ref:         ref("github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.UserInfo"),
+							},
+						},
+					},
+				},
+			},
+			Dependencies: []string{
+				"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.UserInfo", "k8s.io/apimachinery/pkg/runtime.RawExtension"},
+		},
 		"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstanceCredentialSpec": {
 			Schema: spec.Schema{
 				SchemaProps: spec.SchemaProps{
@@ -814,12 +844,24 @@ func GetOpenAPIDefinitions(ref openapi.ReferenceCallback) map[string]openapi.Ope
 								Ref:         ref("k8s.io/apimachinery/pkg/apis/meta/v1.Time"),
 							},
 						},
+						"inProgressProperties": {
+							SchemaProps: spec.SchemaProps{
+								Description: "InProgressProperties is the properties state for which there is a bind operation in progress.",
+								Ref:         ref("github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstanceCredentialPropertiesState"),
+							},
+						},
+						"externalProperties": {
+							SchemaProps: spec.SchemaProps{
+								Description: "ExternalProperties is the properties state that the broker knows about for this ServiceInstanceCredential.",
+								Ref:         ref("github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstanceCredentialPropertiesState"),
+							},
+						},
 					},
 					Required: []string{"conditions", "reconciledGeneration"},
 				},
 			},
 			Dependencies: []string{
-				"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstanceCredentialCondition", "k8s.io/apimachinery/pkg/apis/meta/v1.Time"},
+				"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstanceCredentialCondition", "github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstanceCredentialPropertiesState", "k8s.io/apimachinery/pkg/apis/meta/v1.Time"},
 		},
 		"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstanceList": {
 			Schema: spec.Schema{
@@ -863,6 +905,44 @@ func GetOpenAPIDefinitions(ref openapi.ReferenceCallback) map[string]openapi.Ope
 			},
 			Dependencies: []string{
 				"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstance", "k8s.io/apimachinery/pkg/apis/meta/v1.ListMeta"},
+		},
+		"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstancePropertiesState": {
+			Schema: spec.Schema{
+				SchemaProps: spec.SchemaProps{
+					Description: "ServiceInstancePropertiesState is the state of a ServiceInstance that the ServiceBroker knows about.",
+					Properties: map[string]spec.Schema{
+						"planName": {
+							SchemaProps: spec.SchemaProps{
+								Description: "PlanName is the name of the plan that the broker knows this ServiceInstance to be on.",
+								Type:        []string{"string"},
+								Format:      "",
+							},
+						},
+						"parameters": {
+							SchemaProps: spec.SchemaProps{
+								Description: "Parameters is a blob of the parameters and their values that the broker knows about for this ServiceInstance.  If a parameter was sourced from a secret, its value will be \"<redacted>\" in this blob.",
+								Ref:         ref("k8s.io/apimachinery/pkg/runtime.RawExtension"),
+							},
+						},
+						"parameterChecksum": {
+							SchemaProps: spec.SchemaProps{
+								Description: "ParametersChecksum is the checksum of the parameters that were sent.",
+								Type:        []string{"string"},
+								Format:      "",
+							},
+						},
+						"userInfo": {
+							SchemaProps: spec.SchemaProps{
+								Description: "UserInfo is information about the user that made the request.",
+								Ref:         ref("github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.UserInfo"),
+							},
+						},
+					},
+					Required: []string{"planName"},
+				},
+			},
+			Dependencies: []string{
+				"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.UserInfo", "k8s.io/apimachinery/pkg/runtime.RawExtension"},
 		},
 		"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstanceSpec": {
 			Schema: spec.Schema{
@@ -981,12 +1061,24 @@ func GetOpenAPIDefinitions(ref openapi.ReferenceCallback) map[string]openapi.Ope
 								Ref:         ref("k8s.io/apimachinery/pkg/apis/meta/v1.Time"),
 							},
 						},
+						"inProgressProperties": {
+							SchemaProps: spec.SchemaProps{
+								Description: "InProgressProperties is the properties state for which there is a provision or update action in progress.",
+								Ref:         ref("github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstancePropertiesState"),
+							},
+						},
+						"externalProperties": {
+							SchemaProps: spec.SchemaProps{
+								Description: "ExternalProperties is the properites state which the broker knows about.",
+								Ref:         ref("github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstancePropertiesState"),
+							},
+						},
 					},
 					Required: []string{"conditions", "asyncOpInProgress", "reconciledGeneration"},
 				},
 			},
 			Dependencies: []string{
-				"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstanceCondition", "k8s.io/apimachinery/pkg/apis/meta/v1.Time"},
+				"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstanceCondition", "github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServiceInstancePropertiesState", "k8s.io/apimachinery/pkg/apis/meta/v1.Time"},
 		},
 		"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog/v1alpha1.ServicePlan": {
 			Schema: spec.Schema{

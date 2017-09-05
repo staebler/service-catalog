@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ghodss/yaml"
 	osb "github.com/pmorie/go-open-service-broker-client/v2"
 	fakeosb "github.com/pmorie/go-open-service-broker-client/v2/fake"
 
@@ -509,9 +510,10 @@ func getTestServiceInstanceAsyncProvisioning(operation string) *v1alpha1.Service
 			Message:            "Provisioning",
 			LastTransitionTime: metav1.NewTime(time.Now().Add(-5 * time.Minute)),
 		}},
-		AsyncOpInProgress:  true,
-		OperationStartTime: &operationStartTime,
-		CurrentOperation:   v1alpha1.ServiceInstanceOperationProvision,
+		AsyncOpInProgress:    true,
+		OperationStartTime:   &operationStartTime,
+		CurrentOperation:     v1alpha1.ServiceInstanceOperationProvision,
+		InProgressProperties: &v1alpha1.ServiceInstancePropertiesState{},
 	}
 	if operation != "" {
 		instance.Status.LastOperation = &operation
@@ -534,6 +536,7 @@ func getTestServiceInstanceAsyncDeprovisioning(operation string) *v1alpha1.Servi
 		OperationStartTime:   &operationStartTime,
 		CurrentOperation:     v1alpha1.ServiceInstanceOperationDeprovision,
 		ReconciledGeneration: 1,
+		ExternalProperties:   &v1alpha1.ServiceInstancePropertiesState{},
 	}
 	if operation != "" {
 		instance.Status.LastOperation = &operation
@@ -1546,6 +1549,73 @@ func assertServiceInstanceDashboardURL(t *testing.T, obj runtime.Object, dashboa
 	}
 }
 
+func assertServiceInstanceInProgressPropertiesNil(t *testing.T, obj runtime.Object) {
+	instance, ok := obj.(*v1alpha1.ServiceInstance)
+	if !ok {
+		fatalf(t, "Couldn't convert object %+v into a *v1alpha1.ServiceInstance", obj)
+	}
+
+	if a := instance.Status.InProgressProperties; a != nil {
+		fatalf(t, "expected in-progress properties to be nil: actual %v", a)
+	}
+}
+
+func assertServiceInstanceInProgressPropertiesParameters(t *testing.T, obj runtime.Object, params map[string]interface{}, checksum string) {
+	instance, ok := obj.(*v1alpha1.ServiceInstance)
+	if !ok {
+		fatalf(t, "Couldn't convert object %+v into a *v1alpha1.ServiceInstance", obj)
+	}
+	assertServiceInstancePropertiesStateParameters(t, "in-progress", instance.Status.InProgressProperties, params, checksum)
+}
+
+func assertServiceInstanceExternalPropertiesNil(t *testing.T, obj runtime.Object) {
+	instance, ok := obj.(*v1alpha1.ServiceInstance)
+	if !ok {
+		fatalf(t, "Couldn't convert object %+v into a *v1alpha1.ServiceInstance", obj)
+	}
+
+	if a := instance.Status.ExternalProperties; a != nil {
+		fatalf(t, "expected external properties to be nil: actual %v", a)
+	}
+}
+
+func assertServiceInstanceExternalPropertiesParameters(t *testing.T, obj runtime.Object, params map[string]interface{}, checksum string) {
+	instance, ok := obj.(*v1alpha1.ServiceInstance)
+	if !ok {
+		fatalf(t, "Couldn't convert object %+v into a *v1alpha1.ServiceInstance", obj)
+	}
+	assertServiceInstancePropertiesStateParameters(t, "external", instance.Status.ExternalProperties, params, checksum)
+}
+
+func assertServiceInstancePropertiesStateParameters(t *testing.T, propsLabel string, actualProps *v1alpha1.ServiceInstancePropertiesState, expectedParams map[string]interface{}, expectedChecksum string) {
+	if actualProps == nil {
+		fatalf(t, "expected %v properties to not be nil", propsLabel)
+	}
+	assertPropertiesStateParameters(t, propsLabel, actualProps.Parameters, expectedParams)
+	if e, a := expectedChecksum, actualProps.ParametersChecksum; e != a {
+		fatalf(t, "unexpected %v properties parameters checksum: expected %v, actual %v", propsLabel, e, a)
+	}
+}
+
+func assertPropertiesStateParameters(t *testing.T, propsLabel string, marshalledParams *runtime.RawExtension, expectedParams map[string]interface{}) {
+	if expectedParams == nil {
+		if a := marshalledParams; a != nil {
+			fatalf(t, "expected %v properties parameters to be nil: actual %v", propsLabel, a)
+		}
+	} else {
+		if marshalledParams == nil {
+			fatalf(t, "expected %v properties parameters to not be nil", propsLabel)
+		}
+		actualParams := make(map[string]interface{})
+		if err := yaml.Unmarshal(marshalledParams.Raw, &actualParams); err != nil {
+			fatalf(t, "%v properties parameters could not be unmarshalled: %v", propsLabel, err)
+		}
+		if e, a := expectedParams, actualParams; !reflect.DeepEqual(e, a) {
+			fatalf(t, "unexpected %v properties parameters: expected %v, actual %v", propsLabel, e, a)
+		}
+	}
+}
+
 func assertServiceInstanceCredentialReadyTrue(t *testing.T, obj runtime.Object) {
 	assertServiceInstanceCredentialReadyCondition(t, obj, v1alpha1.ConditionTrue)
 }
@@ -1614,13 +1684,61 @@ func assertServiceInstanceCredentialCurrentOperationClear(t *testing.T, obj runt
 }
 
 func assertServiceInstanceCredentialCurrentOperation(t *testing.T, obj runtime.Object, currentOperation v1alpha1.ServiceInstanceCredentialOperation) {
-	instance, ok := obj.(*v1alpha1.ServiceInstanceCredential)
+	binding, ok := obj.(*v1alpha1.ServiceInstanceCredential)
 	if !ok {
 		fatalf(t, "Couldn't convert object %+v into a *v1alpha1.ServiceInstanceCredential", obj)
 	}
 
-	if e, a := currentOperation, instance.Status.CurrentOperation; e != a {
+	if e, a := currentOperation, binding.Status.CurrentOperation; e != a {
 		fatalf(t, "unexpected current operation: expected %q, got %q", e, a)
+	}
+}
+
+func assertServiceInstanceCredentialInProgressPropertiesNil(t *testing.T, obj runtime.Object) {
+	binding, ok := obj.(*v1alpha1.ServiceInstanceCredential)
+	if !ok {
+		fatalf(t, "Couldn't convert object %+v into a *v1alpha1.ServiceInstanceCredential", obj)
+	}
+
+	if a := binding.Status.InProgressProperties; a != nil {
+		fatalf(t, "expected in-progress properties to be nil: actual %v", a)
+	}
+}
+
+func assertServiceInstanceCredentialInProgressPropertiesParameters(t *testing.T, obj runtime.Object, params map[string]interface{}, checksum string) {
+	binding, ok := obj.(*v1alpha1.ServiceInstanceCredential)
+	if !ok {
+		fatalf(t, "Couldn't convert object %+v into a *v1alpha1.ServiceInstanceCredential", obj)
+	}
+	assertServiceInstanceCredentialPropertiesStateParameters(t, "in-progress", binding.Status.InProgressProperties, params, checksum)
+}
+
+func assertServiceInstanceCredentialExternalPropertiesNil(t *testing.T, obj runtime.Object) {
+	binding, ok := obj.(*v1alpha1.ServiceInstanceCredential)
+	if !ok {
+		fatalf(t, "Couldn't convert object %+v into a *v1alpha1.ServiceInstanceCredential", obj)
+	}
+
+	if a := binding.Status.ExternalProperties; a != nil {
+		fatalf(t, "expected external properties to be nil: actual %v", a)
+	}
+}
+
+func assertServiceInstanceCredentialExternalPropertiesParameters(t *testing.T, obj runtime.Object, params map[string]interface{}, checksum string) {
+	binding, ok := obj.(*v1alpha1.ServiceInstanceCredential)
+	if !ok {
+		fatalf(t, "Couldn't convert object %+v into a *v1alpha1.ServiceInstanceCredential", obj)
+	}
+	assertServiceInstanceCredentialPropertiesStateParameters(t, "external", binding.Status.ExternalProperties, params, checksum)
+}
+
+func assertServiceInstanceCredentialPropertiesStateParameters(t *testing.T, propsLabel string, actualProps *v1alpha1.ServiceInstanceCredentialPropertiesState, expectedParams map[string]interface{}, expectedChecksum string) {
+	if actualProps == nil {
+		fatalf(t, "expected %v properties to not be nil", propsLabel)
+	}
+	assertPropertiesStateParameters(t, propsLabel, actualProps.Parameters, expectedParams)
+	if e, a := expectedChecksum, actualProps.ParametersChecksum; e != a {
+		fatalf(t, "unexpected %v properties parameters checksum: expected %v, actual %v", propsLabel, e, a)
 	}
 }
 

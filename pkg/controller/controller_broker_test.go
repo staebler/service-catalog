@@ -698,7 +698,6 @@ func TestReconcileServiceBrokerSuccessOnFinalRetry(t *testing.T) {
 	assertGetCatalog(t, brokerActions[0])
 
 	actions := fakeCatalogClient.Actions()
-	t.Log(actions)
 	assertNumberOfActions(t, actions, 5)
 
 	// first action should be an update action to clear OperationStartTime

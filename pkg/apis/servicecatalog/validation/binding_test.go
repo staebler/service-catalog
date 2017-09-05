@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/pkg/api/v1"
 
 	"github.com/kubernetes-incubator/service-catalog/pkg/apis/servicecatalog"
@@ -37,6 +38,24 @@ func validServiceInstanceCredential() *servicecatalog.ServiceInstanceCredential 
 			},
 			SecretName: "test-secret",
 		},
+	}
+}
+
+func validServiceInstanceCredentialWithInProgressBind() *servicecatalog.ServiceInstanceCredential {
+	binding := validServiceInstanceCredential()
+	binding.Generation = 1
+	binding.Status.ReconciledGeneration = 2
+	binding.Status.CurrentOperation = servicecatalog.ServiceInstanceCredentialOperationBind
+	now := metav1.Now()
+	binding.Status.OperationStartTime = &now
+	binding.Status.InProgressProperties = validServiceInstanceCredentialPropertiesState()
+	return binding
+}
+
+func validServiceInstanceCredentialPropertiesState() *servicecatalog.ServiceInstanceCredentialPropertiesState {
+	return &servicecatalog.ServiceInstanceCredentialPropertiesState{
+		Parameters:         &runtime.RawExtension{Raw: []byte("a: 1\nb: \"2\"")},
+		ParametersChecksum: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	}
 }
 
@@ -92,6 +111,257 @@ func TestValidateServiceInstanceCredential(t *testing.T) {
 			binding: func() *servicecatalog.ServiceInstanceCredential {
 				b := validServiceInstanceCredential()
 				b.Spec.SecretName = "T_T"
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name:    "valid with in-progress bind",
+			binding: validServiceInstanceCredentialWithInProgressBind(),
+			valid:   true,
+		},
+		{
+			name: "valid with in-progress unbind",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredentialWithInProgressBind()
+				b.Status.CurrentOperation = servicecatalog.ServiceInstanceCredentialOperationUnbind
+				b.Status.InProgressProperties = nil
+				return b
+			}(),
+			valid: true,
+		},
+		{
+			name: "invalid current operation",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredentialWithInProgressBind()
+				b.Status.CurrentOperation = servicecatalog.ServiceInstanceCredentialOperation("bad-operation")
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "in-progress without updated generation",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredentialWithInProgressBind()
+				b.Status.ReconciledGeneration = b.Generation
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "in-progress with missing OperationStartTime",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredentialWithInProgressBind()
+				b.Status.OperationStartTime = nil
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "not in-progress with present OperationStartTime",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredential()
+				now := metav1.Now()
+				b.Status.OperationStartTime = &now
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "in-progress with condition ready/true",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredentialWithInProgressBind()
+				b.Status.Conditions = []servicecatalog.ServiceInstanceCredentialCondition{
+					{
+						Type:   servicecatalog.ServiceInstanceCredentialConditionReady,
+						Status: servicecatalog.ConditionTrue,
+					},
+				}
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "in-progress with condition ready/false",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredentialWithInProgressBind()
+				b.Status.Conditions = []servicecatalog.ServiceInstanceCredentialCondition{
+					{
+						Type:   servicecatalog.ServiceInstanceCredentialConditionReady,
+						Status: servicecatalog.ConditionFalse,
+					},
+				}
+				return b
+			}(),
+			valid: true,
+		},
+		{
+			name: "in-progress bind with missing InProgressParameters",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredentialWithInProgressBind()
+				b.Status.InProgressProperties = nil
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "not in-progress with present InProgressParameters",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredential()
+				b.Status.InProgressProperties = validServiceInstanceCredentialPropertiesState()
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "in-progress unbind with present InProgressParameters",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredentialWithInProgressBind()
+				b.Status.CurrentOperation = servicecatalog.ServiceInstanceCredentialOperationUnbind
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "valid in-progress properties with no parameters",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredentialWithInProgressBind()
+				b.Status.InProgressProperties.Parameters = nil
+				b.Status.InProgressProperties.ParametersChecksum = ""
+				return b
+			}(),
+			valid: true,
+		},
+		{
+			name: "in-progress properties parameters with missing parameters checksum",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredentialWithInProgressBind()
+				b.Status.InProgressProperties.ParametersChecksum = ""
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "in-progress properties parameters checksum with missing parameters",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredentialWithInProgressBind()
+				b.Status.InProgressProperties.Parameters = nil
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "in-progress properties parameters with missing raw",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredentialWithInProgressBind()
+				b.Status.InProgressProperties.Parameters.Raw = []byte{}
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "in-progress properties parameters with malformed yaml",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredentialWithInProgressBind()
+				b.Status.InProgressProperties.Parameters.Raw = []byte("bad yaml")
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "in-progress properties parameters checksum too small",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredentialWithInProgressBind()
+				b.Status.InProgressProperties.ParametersChecksum = "0123456"
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "in-progress properties parameters checksum malformed",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredentialWithInProgressBind()
+				b.Status.InProgressProperties.ParametersChecksum = "not hex"
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "valid external properties",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredential()
+				b.Status.ExternalProperties = validServiceInstanceCredentialPropertiesState()
+				return b
+			}(),
+			valid: true,
+		},
+		{
+			name: "valid external properties with no parameters",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredential()
+				b.Status.ExternalProperties = validServiceInstanceCredentialPropertiesState()
+				b.Status.ExternalProperties.Parameters = nil
+				b.Status.ExternalProperties.ParametersChecksum = ""
+				return b
+			}(),
+			valid: true,
+		},
+		{
+			name: "external properties parameters with missing parameters checksum",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredential()
+				b.Status.ExternalProperties = validServiceInstanceCredentialPropertiesState()
+				b.Status.ExternalProperties.ParametersChecksum = ""
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "external properties parameters checksum with missing parameters",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredential()
+				b.Status.ExternalProperties = validServiceInstanceCredentialPropertiesState()
+				b.Status.ExternalProperties.Parameters = nil
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "external properties parameters with missing raw",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredential()
+				b.Status.ExternalProperties = validServiceInstanceCredentialPropertiesState()
+				b.Status.ExternalProperties.Parameters.Raw = []byte{}
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "external properties parameters with malformed yaml",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredential()
+				b.Status.ExternalProperties = validServiceInstanceCredentialPropertiesState()
+				b.Status.ExternalProperties.Parameters.Raw = []byte("bad yaml")
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "external properties parameters checksum too small",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredential()
+				b.Status.ExternalProperties = validServiceInstanceCredentialPropertiesState()
+				b.Status.ExternalProperties.ParametersChecksum = "0123456"
+				return b
+			}(),
+			valid: false,
+		},
+		{
+			name: "external properties parameters checksum malformed",
+			binding: func() *servicecatalog.ServiceInstanceCredential {
+				b := validServiceInstanceCredential()
+				b.Status.ExternalProperties = validServiceInstanceCredentialPropertiesState()
+				b.Status.ExternalProperties.ParametersChecksum = "not hex"
 				return b
 			}(),
 			valid: false,
