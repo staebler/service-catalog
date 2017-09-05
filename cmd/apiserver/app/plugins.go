@@ -21,6 +21,7 @@ package app
 // given binary target.
 import (
 	// Admission controllers
+	_ "github.com/kubernetes-incubator/service-catalog/plugin/pkg/admission/blockconcurrentupdates"
 	_ "github.com/kubernetes-incubator/service-catalog/plugin/pkg/admission/broker/authsarcheck"
 	_ "github.com/kubernetes-incubator/service-catalog/plugin/pkg/admission/namespace/lifecycle"
 	_ "github.com/kubernetes-incubator/service-catalog/plugin/pkg/admission/serviceinstancecredentials/lifecycle"

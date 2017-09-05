@@ -765,6 +765,25 @@ func TestReconcileServiceBrokerFailureOnFinalRetry(t *testing.T) {
 	}
 }
 
+// TestReconcileServiceBrokerWithStatusUpdateError verifies that the reconciler
+// returns an error when there is a conflict updating the status of the resource
+func TestReconcileServiceBrokerWithStatusUpdateError(t *testing.T) {
+	_, fakeCatalogClient, _, testController, sharedInformers := newTestController(t, getTestCatalogConfig())
+	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
+	broker := getTestServiceBroker()
+	fakeCatalogClient.AddReactor("update", "servicebrokers", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("update error")
+	})
+
+	err := testController.reconcileServiceBroker(broker)
+	if err == nil {
+		t.Fatalf("expected error from but got none")
+	}
+	if e, a := "update error", err.Error(); e != a {
+		t.Fatalf("unexpected error returned: expected %q, got %q", e, a)
+	}
+}
+
 // TestUpdateServiceBrokerCondition ensures that with specific conditions
 // the broker correctly reflects the changes during updateServiceBrokerCondition().
 //

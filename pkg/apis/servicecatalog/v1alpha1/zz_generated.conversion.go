@@ -582,6 +582,7 @@ func Convert_servicecatalog_ServiceInstanceCredentialSpec_To_v1alpha1_ServiceIns
 
 func autoConvert_v1alpha1_ServiceInstanceCredentialStatus_To_servicecatalog_ServiceInstanceCredentialStatus(in *ServiceInstanceCredentialStatus, out *servicecatalog.ServiceInstanceCredentialStatus, s conversion.Scope) error {
 	out.Conditions = *(*[]servicecatalog.ServiceInstanceCredentialCondition)(unsafe.Pointer(&in.Conditions))
+	out.CurrentOperation = servicecatalog.ServiceInstanceCredentialOperation(in.CurrentOperation)
 	out.ReconciledGeneration = in.ReconciledGeneration
 	out.OperationStartTime = (*meta_v1.Time)(unsafe.Pointer(in.OperationStartTime))
 	return nil
@@ -598,6 +599,7 @@ func autoConvert_servicecatalog_ServiceInstanceCredentialStatus_To_v1alpha1_Serv
 	} else {
 		out.Conditions = *(*[]ServiceInstanceCredentialCondition)(unsafe.Pointer(&in.Conditions))
 	}
+	out.CurrentOperation = ServiceInstanceCredentialOperation(in.CurrentOperation)
 	out.ReconciledGeneration = in.ReconciledGeneration
 	out.OperationStartTime = (*meta_v1.Time)(unsafe.Pointer(in.OperationStartTime))
 	return nil
@@ -669,6 +671,7 @@ func autoConvert_v1alpha1_ServiceInstanceStatus_To_servicecatalog_ServiceInstanc
 	out.AsyncOpInProgress = in.AsyncOpInProgress
 	out.LastOperation = (*string)(unsafe.Pointer(in.LastOperation))
 	out.DashboardURL = (*string)(unsafe.Pointer(in.DashboardURL))
+	out.CurrentOperation = servicecatalog.ServiceInstanceOperation(in.CurrentOperation)
 	out.ReconciledGeneration = in.ReconciledGeneration
 	out.OperationStartTime = (*meta_v1.Time)(unsafe.Pointer(in.OperationStartTime))
 	return nil
@@ -688,6 +691,7 @@ func autoConvert_servicecatalog_ServiceInstanceStatus_To_v1alpha1_ServiceInstanc
 	out.AsyncOpInProgress = in.AsyncOpInProgress
 	out.LastOperation = (*string)(unsafe.Pointer(in.LastOperation))
 	out.DashboardURL = (*string)(unsafe.Pointer(in.DashboardURL))
+	out.CurrentOperation = ServiceInstanceOperation(in.CurrentOperation)
 	out.ReconciledGeneration = in.ReconciledGeneration
 	out.OperationStartTime = (*meta_v1.Time)(unsafe.Pointer(in.OperationStartTime))
 	return nil

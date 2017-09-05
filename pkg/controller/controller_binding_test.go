@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/diff"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 
+	servicecatalogclientset "github.com/kubernetes-incubator/service-catalog/pkg/client/clientset_generated/clientset/fake"
 	scfeatures "github.com/kubernetes-incubator/service-catalog/pkg/features"
 	"k8s.io/client-go/pkg/api"
 	"k8s.io/client-go/pkg/api/v1"
@@ -76,6 +77,10 @@ func TestReconcileServiceInstanceCredentialNonExistingServiceInstance(t *testing
 	}
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
 	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, errorNonexistentServiceInstanceReason)
+
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 0)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, false)
 
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
@@ -131,6 +136,10 @@ func TestReconcileServiceInstanceCredentialNonExistingServiceClass(t *testing.T)
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
 	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, errorNonexistentServiceClassMessage)
 
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 0)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, false)
+
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
 
@@ -159,6 +168,8 @@ func TestReconcileServiceInstanceCredentialWithSecretConflict(t *testing.T) {
 	addGetSecretReaction(fakeKubeClient, &v1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: testServiceInstanceCredentialName, Namespace: testNamespace},
 	})
+
+	setUpFakeCatalogToReturnUpdatedServiceInstanceCredential(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -197,9 +208,19 @@ func TestReconcileServiceInstanceCredentialWithSecretConflict(t *testing.T) {
 	})
 
 	actions := fakeCatalogClient.Actions()
-	assertNumberOfActions(t, actions, 1)
+	assertNumberOfActions(t, actions, 3)
+
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding).(*v1alpha1.ServiceInstanceCredential)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingReason)
+	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
+
+	assertGet(t, actions[1], binding)
+
+	updatedServiceInstanceCredential = assertUpdateStatus(t, actions[2], binding).(*v1alpha1.ServiceInstanceCredential)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, errorInjectingBindResultReason)
+	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 0)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, true)
 
 	kubeActions := fakeKubeClient.Actions()
 	assertNumberOfActions(t, kubeActions, 2)
@@ -239,6 +260,8 @@ func TestReconcileServiceInstanceCredentialWithParameters(t *testing.T) {
 
 	addGetNamespaceReaction(fakeKubeClient)
 	addGetSecretNotFoundReaction(fakeKubeClient)
+
+	setUpFakeCatalogToReturnUpdatedServiceInstanceCredential(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -293,9 +316,19 @@ func TestReconcileServiceInstanceCredentialWithParameters(t *testing.T) {
 	})
 
 	actions := fakeCatalogClient.Actions()
-	assertNumberOfActions(t, actions, 1)
+	assertNumberOfActions(t, actions, 3)
+
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding).(*v1alpha1.ServiceInstanceCredential)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingReason)
+	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
+
+	assertGet(t, actions[1], binding)
+
+	updatedServiceInstanceCredential = assertUpdateStatus(t, actions[2], binding).(*v1alpha1.ServiceInstanceCredential)
 	assertServiceInstanceCredentialReadyTrue(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 1)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, false)
 
 	kubeActions := fakeKubeClient.Actions()
 	assertNumberOfActions(t, kubeActions, 3)
@@ -385,6 +418,10 @@ func TestReconcileServiceInstanceCredentialNonbindableServiceClass(t *testing.T)
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
 	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, errorNonbindableServiceClassReason)
 
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 0)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, false)
+
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
 
@@ -411,6 +448,8 @@ func TestReconcileServiceInstanceCredentialNonbindableServiceClassBindablePlan(t
 
 	addGetNamespaceReaction(fakeKubeClient)
 	addGetSecretNotFoundReaction(fakeKubeClient)
+
+	setUpFakeCatalogToReturnUpdatedServiceInstanceCredential(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestNonbindableServiceClass())
@@ -460,9 +499,19 @@ func TestReconcileServiceInstanceCredentialNonbindableServiceClassBindablePlan(t
 	})
 
 	actions := fakeCatalogClient.Actions()
-	assertNumberOfActions(t, actions, 1)
+	assertNumberOfActions(t, actions, 3)
+
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingReason)
+	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
+
+	assertGet(t, actions[1], binding)
+
+	updatedServiceInstanceCredential = assertUpdateStatus(t, actions[2], binding)
 	assertServiceInstanceCredentialReadyTrue(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 1)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, false)
 
 	kubeActions := fakeKubeClient.Actions()
 	assertNumberOfActions(t, kubeActions, 3)
@@ -540,6 +589,10 @@ func TestReconcileServiceInstanceCredentialBindableServiceClassNonbindablePlan(t
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
 	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, errorNonbindableServiceClassReason)
 
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 0)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, false)
+
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
 
@@ -596,6 +649,10 @@ func TestReconcileServiceInstanceCredentialFailsWithServiceInstanceAsyncOngoing(
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
 	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential)
 
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 0)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, false)
+
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
 
@@ -649,6 +706,10 @@ func TestReconcileServiceInstanceCredentialServiceInstanceNotReady(t *testing.T)
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
 	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential)
 
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 0)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, false)
+
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
 
@@ -698,6 +759,10 @@ func TestReconcileServiceInstanceCredentialNamespaceError(t *testing.T) {
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
 	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential)
 
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 0)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, false)
+
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
 
@@ -713,6 +778,8 @@ func TestReconcileServiceInstanceCredentialDelete(t *testing.T) {
 	fakeKubeClient, fakeCatalogClient, fakeServiceBrokerClient, testController, sharedInformers := newTestController(t, fakeosb.FakeClientConfiguration{
 		UnbindReaction: &fakeosb.UnbindReaction{},
 	})
+
+	setUpFakeCatalogToReturnUpdatedServiceInstanceCredential(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -731,6 +798,9 @@ func TestReconcileServiceInstanceCredentialDelete(t *testing.T) {
 			ServiceInstanceRef: v1.LocalObjectReference{Name: testServiceInstanceName},
 			ExternalID:         bindingGUID,
 			SecretName:         testServiceInstanceCredentialSecretName,
+		},
+		Status: v1alpha1.ServiceInstanceCredentialStatus{
+			ReconciledGeneration: 1,
 		},
 	}
 
@@ -766,18 +836,30 @@ func TestReconcileServiceInstanceCredentialDelete(t *testing.T) {
 	}
 
 	actions := fakeCatalogClient.Actions()
-	// The three actions should be:
-	// 0. Updating the ready condition
-	// 1. Get against the binding in question
-	// 2. Removing the finalizer
-	assertNumberOfActions(t, actions, 3)
+	// The actions should be:
+	// 0. Updating the current operation
+	// 1. Getting the updated binding
+	// 2. Updating the ready condition
+	// 3. Get against the binding in question
+	// 4. Removing the finalizer
+	assertNumberOfActions(t, actions, 5)
 
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, unbindingReason)
+	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationUnbind)
 
 	assertGet(t, actions[1], binding)
 
 	updatedServiceInstanceCredential = assertUpdateStatus(t, actions[2], binding)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential)
+
+	assertGet(t, actions[3], binding)
+
+	updatedServiceInstanceCredential = assertUpdateStatus(t, actions[4], binding)
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 1)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, false)
+
 	assertEmptyFinalizers(t, updatedServiceInstanceCredential)
 
 	events := getRecordedEvents(testController)
@@ -934,6 +1016,8 @@ func TestReconcileServiceInstanceCredentialDeleteFailedServiceInstanceCredential
 		UnbindReaction: &fakeosb.UnbindReaction{},
 	})
 
+	setUpFakeCatalogToReturnUpdatedServiceInstanceCredential(fakeCatalogClient)
+
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
 	sharedInformers.ServiceInstances().Informer().GetStore().Add(getTestServiceInstance())
@@ -978,19 +1062,31 @@ func TestReconcileServiceInstanceCredentialDeleteFailedServiceInstanceCredential
 	}
 
 	actions := fakeCatalogClient.Actions()
-	// The three actions should be:
-	// 0. Updating the ready condition
-	// 1. Get against the binding in question
-	// 2. Removing the finalizer
-	assertNumberOfActions(t, actions, 3)
+	// The four actions should be:
+	// 0. Updating the current operation
+	// 1. Getting the updated binding
+	// 2. Updating the ready condition
+	// 3. Get against the binding in question
+	// 4. Removing the finalizer
+	assertNumberOfActions(t, actions, 5)
 
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, unbindingReason)
+	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationUnbind)
 
 	assertGet(t, actions[1], binding)
 
 	updatedServiceInstanceCredential = assertUpdateStatus(t, actions[2], binding)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential)
+
+	assertGet(t, actions[3], binding)
+
+	updatedServiceInstanceCredential = assertUpdateStatus(t, actions[4], binding)
 	assertEmptyFinalizers(t, updatedServiceInstanceCredential)
+
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 1)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, false)
 
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
@@ -1004,7 +1100,7 @@ func TestReconcileServiceInstanceCredentialDeleteFailedServiceInstanceCredential
 // TestReconcileBindingWithBrokerError tests reconcileBinding to ensure a
 // binding request response that contains a broker error fails as expected.
 func TestReconcileServiceInstanceCredentialWithServiceBrokerError(t *testing.T) {
-	_, _, _, testController, sharedInformers := newTestController(t, fakeosb.FakeClientConfiguration{
+	_, fakeCatalogClient, _, testController, sharedInformers := newTestController(t, fakeosb.FakeClientConfiguration{
 		BindReaction: &fakeosb.BindReaction{
 			Response: &osb.BindResponse{
 				Credentials: map[string]interface{}{
@@ -1015,6 +1111,8 @@ func TestReconcileServiceInstanceCredentialWithServiceBrokerError(t *testing.T) 
 			Error: fakeosb.UnexpectedActionError(),
 		},
 	})
+
+	setUpFakeCatalogToReturnUpdatedServiceInstanceCredential(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -1039,6 +1137,22 @@ func TestReconcileServiceInstanceCredentialWithServiceBrokerError(t *testing.T) 
 		t.Fatal("reconcileServiceInstanceCredential should have returned an error")
 	}
 
+	actions := fakeCatalogClient.Actions()
+	assertNumberOfActions(t, actions, 3)
+
+	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingReason)
+	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
+
+	assertGet(t, actions[1], binding)
+
+	updatedServiceInstanceCredential = assertUpdateStatus(t, actions[2], binding)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, errorBindCallReason)
+
+	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 0)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, true)
+
 	events := getRecordedEvents(testController)
 	expectedEvent := api.EventTypeWarning + " " + errorBindCallReason + " " + `Error creating ServiceInstanceCredential "test-binding/test-ns" for ServiceInstance "test-ns/test-instance" of ServiceClass "test-serviceclass" at ServiceBroker "test-broker": Unexpected action`
 	if 1 != len(events) {
@@ -1052,7 +1166,7 @@ func TestReconcileServiceInstanceCredentialWithServiceBrokerError(t *testing.T) 
 // TestReconcileBindingWithBrokerHTTPError tests reconcileBindings to ensure a
 // binding request response that contains a broker HTTP error fails as expected.
 func TestReconcileServiceInstanceCredentialWithServiceBrokerHTTPError(t *testing.T) {
-	_, _, _, testController, sharedInformers := newTestController(t, fakeosb.FakeClientConfiguration{
+	_, fakeCatalogClient, _, testController, sharedInformers := newTestController(t, fakeosb.FakeClientConfiguration{
 		BindReaction: &fakeosb.BindReaction{
 			Response: &osb.BindResponse{
 				Credentials: map[string]interface{}{
@@ -1063,6 +1177,8 @@ func TestReconcileServiceInstanceCredentialWithServiceBrokerHTTPError(t *testing
 			Error: fakeosb.AsyncRequiredError(),
 		},
 	})
+
+	setUpFakeCatalogToReturnUpdatedServiceInstanceCredential(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -1086,6 +1202,22 @@ func TestReconcileServiceInstanceCredentialWithServiceBrokerHTTPError(t *testing
 	if err != nil {
 		t.Fatal("reconcileServiceInstanceCredential should not have returned an error")
 	}
+
+	actions := fakeCatalogClient.Actions()
+	assertNumberOfActions(t, actions, 3)
+
+	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingReason)
+	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
+
+	assertGet(t, actions[1], binding)
+
+	updatedServiceInstanceCredential = assertUpdateStatus(t, actions[2], binding)
+	assertServiceInstanceCredentialCondition(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialConditionFailed, v1alpha1.ConditionTrue)
+
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 1)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, false)
 
 	events := getRecordedEvents(testController)
 	expectedEvent := api.EventTypeWarning + " " + errorBindCallReason + " " + `Error creating ServiceInstanceCredential "test-binding/test-ns" for ServiceInstance "test-ns/test-instance" of ServiceClass "test-serviceclass" at ServiceBroker "test-broker", Status: 422; ErrorMessage: AsyncRequired; Description: This service plan requires client support for asynchronous service operations.; ResponseError: <nil>`
@@ -1135,6 +1267,8 @@ func TestReconcileServiceInstanceCredentialWithServiceInstanceCredentialCallFail
 		},
 	})
 
+	setUpFakeCatalogToReturnUpdatedServiceInstanceCredential(fakeCatalogClient)
+
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
 	sharedInformers.ServiceInstances().Informer().GetStore().Add(getTestServiceInstanceWithStatus(v1alpha1.ConditionTrue))
@@ -1155,7 +1289,19 @@ func TestReconcileServiceInstanceCredentialWithServiceInstanceCredentialCallFail
 	}
 
 	actions := fakeCatalogClient.Actions()
-	assertNumberOfActions(t, actions, 1)
+	assertNumberOfActions(t, actions, 3)
+
+	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingReason)
+	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
+
+	assertGet(t, actions[1], binding)
+
+	updatedServiceInstanceCredential = assertUpdateStatus(t, actions[2], binding)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, errorBindCallReason)
+	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 0)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, true)
 
 	brokerActions := fakeServiceBrokerClient.Actions()
 	assertNumberOfServiceBrokerActions(t, brokerActions, 1)
@@ -1193,6 +1339,8 @@ func TestReconcileServiceInstanceCredentialWithServiceInstanceCredentialFailure(
 		},
 	})
 
+	setUpFakeCatalogToReturnUpdatedServiceInstanceCredential(fakeCatalogClient)
+
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
 	sharedInformers.ServiceInstances().Informer().GetStore().Add(getTestServiceInstanceWithStatus(v1alpha1.ConditionTrue))
@@ -1213,17 +1361,22 @@ func TestReconcileServiceInstanceCredentialWithServiceInstanceCredentialFailure(
 	}
 
 	actions := fakeCatalogClient.Actions()
-	assertNumberOfActions(t, actions, 1)
+	assertNumberOfActions(t, actions, 3)
 
-	updatedObject := assertUpdateStatus(t, actions[0], binding)
-	assertServiceInstanceCredentialReadyFalse(t, updatedObject)
-	updatedServiceInstanceCredential, ok := updatedObject.(*v1alpha1.ServiceInstanceCredential)
-	if !ok {
-		t.Fatal("Couldn't convert to v1alpha1.ServiceInstanceCredential")
-	}
-	if num := len(updatedServiceInstanceCredential.Status.Conditions); num != 2 {
-		t.Fatalf("Expected two conditions, got %v", num)
-	}
+	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding).(*v1alpha1.ServiceInstanceCredential)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingReason)
+	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
+
+	assertGet(t, actions[1], binding)
+
+	updatedObject := assertUpdateStatus(t, actions[2], binding)
+	assertServiceInstanceCredentialReadyFalse(t, updatedObject, errorBindCallReason)
+	assertServiceInstanceCredentialCondition(t, updatedObject, v1alpha1.ServiceInstanceCredentialConditionFailed, v1alpha1.ConditionTrue)
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedObject)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedObject, 1)
+	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedObject, false)
+
+	assertEmptyFinalizers(t, updatedObject)
 
 	brokerActions := fakeServiceBrokerClient.Actions()
 	assertNumberOfServiceBrokerActions(t, brokerActions, 1)
@@ -1411,6 +1564,8 @@ func TestReconcileUnbindingWithServiceBrokerError(t *testing.T) {
 		},
 	})
 
+	setUpFakeCatalogToReturnUpdatedServiceInstanceCredential(fakeCatalogClient)
+
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
 	sharedInformers.ServiceInstances().Informer().GetStore().Add(getTestServiceInstanceWithStatus(v1alpha1.ConditionTrue))
@@ -1438,11 +1593,17 @@ func TestReconcileUnbindingWithServiceBrokerError(t *testing.T) {
 	}
 
 	actions := fakeCatalogClient.Actions()
-	assertNumberOfActions(t, actions, 1)
+	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, unbindingReason)
+	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationUnbind)
 
+	assertGet(t, actions[1], binding)
+
+	updatedServiceInstanceCredential = assertUpdateStatus(t, actions[2], binding)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, errorUnbindCallReason)
+	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationUnbind)
 	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 0)
 	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, true)
 
@@ -1468,6 +1629,8 @@ func TestReconcileUnbindingWithServiceBrokerHTTPError(t *testing.T) {
 			},
 		},
 	})
+
+	setUpFakeCatalogToReturnUpdatedServiceInstanceCredential(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -1496,10 +1659,18 @@ func TestReconcileUnbindingWithServiceBrokerHTTPError(t *testing.T) {
 	}
 
 	actions := fakeCatalogClient.Actions()
-	assertNumberOfActions(t, actions, 1)
+	assertNumberOfActions(t, actions, 3)
+
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, unbindingReason)
+	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationUnbind)
+
+	assertGet(t, actions[1], binding)
+
+	updatedServiceInstanceCredential = assertUpdateStatus(t, actions[2], binding)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, errorUnbindCallReason)
 	assertServiceInstanceCredentialCondition(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialConditionFailed, v1alpha1.ConditionTrue)
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedServiceInstanceCredential)
 	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, false)
 
 	events := getRecordedEvents(testController)
@@ -1520,7 +1691,7 @@ func TestReconcileBindingUsingOriginatingIdentity(t *testing.T) {
 				defer utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%v=false", scfeatures.OriginatingIdentity))
 			}
 
-			fakeKubeClient, _, fakeBrokerClient, testController, sharedInformers := newTestController(t, fakeosb.FakeClientConfiguration{
+			fakeKubeClient, fakeCatalogClient, fakeBrokerClient, testController, sharedInformers := newTestController(t, fakeosb.FakeClientConfiguration{
 				BindReaction: &fakeosb.BindReaction{
 					Response: &osb.BindResponse{},
 				},
@@ -1528,6 +1699,8 @@ func TestReconcileBindingUsingOriginatingIdentity(t *testing.T) {
 
 			addGetNamespaceReaction(fakeKubeClient)
 			addGetSecretNotFoundReaction(fakeKubeClient)
+
+			setUpFakeCatalogToReturnUpdatedServiceInstanceCredential(fakeCatalogClient)
 
 			sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 			sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -1571,12 +1744,14 @@ func TestReconcileBindingDeleteUsingOriginatingIdentity(t *testing.T) {
 				defer utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%v=false", scfeatures.OriginatingIdentity))
 			}
 
-			fakeKubeClient, _, fakeBrokerClient, testController, sharedInformers := newTestController(t, fakeosb.FakeClientConfiguration{
+			fakeKubeClient, fakeCatalogClient, fakeBrokerClient, testController, sharedInformers := newTestController(t, fakeosb.FakeClientConfiguration{
 				UnbindReaction: &fakeosb.UnbindReaction{},
 			})
 
 			addGetNamespaceReaction(fakeKubeClient)
 			addGetSecretNotFoundReaction(fakeKubeClient)
+
+			setUpFakeCatalogToReturnUpdatedServiceInstanceCredential(fakeCatalogClient)
 
 			sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 			sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -1634,6 +1809,7 @@ func TestReconcileBindingSuccessOnFinalRetry(t *testing.T) {
 	sharedInformers.ServiceInstances().Informer().GetStore().Add(getTestServiceInstanceWithStatus(v1alpha1.ConditionTrue))
 
 	binding := getTestServiceInstanceCredential()
+	binding.Status.CurrentOperation = v1alpha1.ServiceInstanceCredentialOperationBind
 	startTime := metav1.NewTime(time.Now().Add(-7 * 24 * time.Hour))
 	binding.Status.OperationStartTime = &startTime
 
@@ -1657,6 +1833,7 @@ func TestReconcileBindingSuccessOnFinalRetry(t *testing.T) {
 	actions := fakeCatalogClient.Actions()
 	assertNumberOfActions(t, actions, 1)
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding).(*v1alpha1.ServiceInstanceCredential)
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedServiceInstanceCredential)
 	assertServiceInstanceCredentialReadyTrue(t, updatedServiceInstanceCredential)
 	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, false)
 
@@ -1690,6 +1867,7 @@ func TestReconcileBindingFailureOnFinalRetry(t *testing.T) {
 	sharedInformers.ServiceInstances().Informer().GetStore().Add(getTestServiceInstanceWithStatus(v1alpha1.ConditionTrue))
 
 	binding := getTestServiceInstanceCredential()
+	binding.Status.CurrentOperation = v1alpha1.ServiceInstanceCredentialOperationBind
 	startTime := metav1.NewTime(time.Now().Add(-7 * 24 * time.Hour))
 	binding.Status.OperationStartTime = &startTime
 
@@ -1702,6 +1880,9 @@ func TestReconcileBindingFailureOnFinalRetry(t *testing.T) {
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding).(*v1alpha1.ServiceInstanceCredential)
 	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential)
 	assertServiceInstanceCredentialCondition(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialConditionFailed, v1alpha1.ConditionTrue, errorReconciliationRetryTimeoutReason)
+
+	assertServiceInstanceCredentialCurrentOperationClear(t, updatedServiceInstanceCredential)
+	assertServiceInstanceCredentialReconciledGeneration(t, updatedServiceInstanceCredential, 1)
 	assertServiceInstanceCredentialOperationStartTimeSet(t, updatedServiceInstanceCredential, false)
 
 	expectedEventPrefixes := []string{
@@ -1745,6 +1926,7 @@ func TestReconcileBindingWithSecretConflictFailedAfterFinalRetry(t *testing.T) {
 	sharedInformers.ServicePlans().Informer().GetStore().Add(getTestServicePlan())
 	sharedInformers.ServiceInstances().Informer().GetStore().Add(getTestServiceInstanceWithStatus(v1alpha1.ConditionTrue))
 
+	startTime := metav1.NewTime(time.Now().Add(-7 * 24 * time.Hour))
 	binding := &v1alpha1.ServiceInstanceCredential{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       testServiceInstanceCredentialName,
@@ -1756,9 +1938,11 @@ func TestReconcileBindingWithSecretConflictFailedAfterFinalRetry(t *testing.T) {
 			ExternalID:         bindingGUID,
 			SecretName:         testServiceInstanceCredentialSecretName,
 		},
+		Status: v1alpha1.ServiceInstanceCredentialStatus{
+			CurrentOperation:   v1alpha1.ServiceInstanceCredentialOperationBind,
+			OperationStartTime: &startTime,
+		},
 	}
-	startTime := metav1.NewTime(time.Now().Add(-7 * 24 * time.Hour))
-	binding.Status.OperationStartTime = &startTime
 
 	if err := testController.reconcileServiceInstanceCredential(binding); err != nil {
 		t.Fatalf("reconciliation should complete since the retry duration has elapsed: %v", err)
@@ -1808,4 +1992,51 @@ func TestReconcileBindingWithSecretConflictFailedAfterFinalRetry(t *testing.T) {
 			t.Fatalf("Received unexpected event:\n  expected prefix: %v\n  got: %v", e, a)
 		}
 	}
+}
+
+// TestReconcileServiceInstanceCrednetialWithStatusUpdateError verifies that the
+// reconciler returns an error when there is a conflict updating the status of
+// the resource
+func TestReconcileServiceInstanceCredentialWithStatusUpdateError(t *testing.T) {
+	fakeKubeClient, fakeCatalogClient, _, testController, sharedInformers := newTestController(t, fakeosb.FakeClientConfiguration{
+		BindReaction: &fakeosb.BindReaction{
+			Response: &osb.BindResponse{
+				Credentials: map[string]interface{}{
+					"a": "b",
+					"c": "d",
+				},
+			},
+		},
+	})
+	addGetNamespaceReaction(fakeKubeClient)
+	addGetSecretNotFoundReaction(fakeKubeClient)
+	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
+	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
+	sharedInformers.ServiceInstances().Informer().GetStore().Add(getTestServiceInstanceWithStatus(v1alpha1.ConditionTrue))
+	binding := getTestServiceInstanceCredential()
+	fakeCatalogClient.AddReactor("update", "serviceinstancecredentials", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("update error")
+	})
+
+	err := testController.reconcileServiceInstanceCredential(binding)
+	if err == nil {
+		t.Fatalf("expected error from but got none")
+	}
+	if e, a := "update error", err.Error(); e != a {
+		t.Fatalf("unexpected error returned: expected %q, got %q", e, a)
+	}
+}
+
+func setUpFakeCatalogToReturnUpdatedServiceInstanceCredential(fakeCatalogClient *servicecatalogclientset.Clientset) {
+	var bindingInStore *v1alpha1.ServiceInstanceCredential
+	fakeCatalogClient.AddReactor("get", "serviceinstancecredentials", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		if bindingInStore == nil {
+			return true, nil, errors.New("not found")
+		}
+		return true, bindingInStore, nil
+	})
+	fakeCatalogClient.AddReactor("update", "serviceinstancecredentials", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		bindingInStore = action.(clientgotesting.UpdateAction).GetObject().(*v1alpha1.ServiceInstanceCredential)
+		return false, nil, nil
+	})
 }

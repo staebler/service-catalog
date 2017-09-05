@@ -24,6 +24,7 @@ import (
 	"github.com/golang/glog"
 	"github.com/kubernetes-incubator/service-catalog/pkg"
 	"github.com/kubernetes-incubator/service-catalog/pkg/registry/servicecatalog/server"
+	"github.com/kubernetes-incubator/service-catalog/plugin/pkg/admission/blockconcurrentupdates"
 	"github.com/kubernetes-incubator/service-catalog/plugin/pkg/admission/broker/authsarcheck"
 	"github.com/kubernetes-incubator/service-catalog/plugin/pkg/admission/namespace/lifecycle"
 	siclifecycle "github.com/kubernetes-incubator/service-catalog/plugin/pkg/admission/serviceinstancecredentials/lifecycle"
@@ -143,4 +144,5 @@ func registerAllAdmissionPlugins(plugins *admission.Plugins) {
 	siclifecycle.Register(plugins)
 	changevalidator.Register(plugins)
 	authsarcheck.Register(plugins)
+	blockconcurrentupdates.Register(plugins)
 }

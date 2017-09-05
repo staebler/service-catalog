@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/diff"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 
+	servicecatalogclientset "github.com/kubernetes-incubator/service-catalog/pkg/client/clientset_generated/clientset/fake"
 	scfeatures "github.com/kubernetes-incubator/service-catalog/pkg/features"
 	"k8s.io/client-go/pkg/api"
 	"k8s.io/client-go/pkg/api/v1"
@@ -77,6 +78,10 @@ func TestReconcileServiceInstanceNonExistentServiceClass(t *testing.T) {
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
 	assertServiceInstanceReadyFalse(t, updatedServiceInstance, errorNonexistentServiceClassReason)
 
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 0)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
+
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
 
@@ -109,6 +114,10 @@ func TestReconcileServiceInstanceNonExistentServiceBroker(t *testing.T) {
 	// There should only be one action that says it failed because no such broker exists.
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
 	assertServiceInstanceReadyFalse(t, updatedServiceInstance, errorNonexistentServiceBrokerReason)
+
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 0)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
 
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
@@ -156,10 +165,15 @@ func TestReconcileServiceInstanceWithAuthError(t *testing.T) {
 	if err := checkCatalogClientActions(actions, []catalogClientAction{
 		{
 			verb: "update",
-			checkObject: checkServiceInstance(instanceDescription{
-				name:             testServiceInstanceName,
-				conditionReasons: []string{"ErrorGettingAuthCredentials"},
-			}),
+			checkObject: func(obj runtime.Object) error {
+				assertServiceInstanceCurrentOperationClear(t, obj)
+				assertServiceInstanceReconciledGeneration(t, obj, 0)
+				assertServiceInstanceOperationStartTimeSet(t, obj, false)
+				return checkServiceInstance(instanceDescription{
+					name:             testServiceInstanceName,
+					conditionReasons: []string{"ErrorGettingAuthCredentials"},
+				})(obj)
+			},
 			getRuntimeObject: getRuntimeObjectFromUpdateAction,
 		},
 	}); err != nil {
@@ -217,10 +231,15 @@ func TestReconcileServiceInstanceNonExistentServicePlan(t *testing.T) {
 		{
 			verb:             "update",
 			getRuntimeObject: getRuntimeObjectFromUpdateAction,
-			checkObject: checkServiceInstance(instanceDescription{
-				name:             testServiceInstanceName,
-				conditionReasons: []string{errorNonexistentServicePlanReason},
-			}),
+			checkObject: func(obj runtime.Object) error {
+				assertServiceInstanceCurrentOperationClear(t, obj)
+				assertServiceInstanceReconciledGeneration(t, obj, 0)
+				assertServiceInstanceOperationStartTimeSet(t, obj, false)
+				return checkServiceInstance(instanceDescription{
+					name:             testServiceInstanceName,
+					conditionReasons: []string{errorNonexistentServicePlanReason},
+				})(obj)
+			},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -242,6 +261,8 @@ func TestReconcileServiceInstanceWithParameters(t *testing.T) {
 			Response: &osb.ProvisionResponse{},
 		},
 	})
+
+	setUpFakeCatalogToReturnUpdatedServiceInstance(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -284,10 +305,19 @@ func TestReconcileServiceInstanceWithParameters(t *testing.T) {
 	})
 
 	actions := fakeCatalogClient.Actions()
-	assertNumberOfActions(t, actions, 1)
+	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, provisioningReason)
+	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationProvision)
+
+	assertGet(t, actions[1], instance)
+
+	updatedServiceInstance = assertUpdateStatus(t, actions[2], instance)
 	assertServiceInstanceReadyTrue(t, updatedServiceInstance)
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
 
 	updateObject, ok := updatedServiceInstance.(*v1alpha1.ServiceInstance)
 	if !ok {
@@ -356,6 +386,10 @@ func TestReconcileServiceInstanceWithInvalidParameters(t *testing.T) {
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
 	assertServiceInstanceReadyFalse(t, updatedServiceInstance)
 
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 0)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
+
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
 
@@ -374,6 +408,8 @@ func TestReconcileServiceInstanceWithProvisionCallFailure(t *testing.T) {
 			Error: errors.New("fake creation failure"),
 		},
 	})
+
+	setUpFakeCatalogToReturnUpdatedServiceInstance(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -408,10 +444,16 @@ func TestReconcileServiceInstanceWithProvisionCallFailure(t *testing.T) {
 	}
 
 	actions := fakeCatalogClient.Actions()
-	assertNumberOfActions(t, actions, 1)
+	assertNumberOfActions(t, actions, 3)
 
 	updatedObject := assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedObject)
+	assertServiceInstanceReadyFalse(t, updatedObject, provisioningReason)
+	assertServiceInstanceCurrentOperation(t, updatedObject, v1alpha1.ServiceInstanceOperationProvision)
+
+	assertGet(t, actions[1], instance)
+
+	updatedObject = assertUpdateStatus(t, actions[2], instance)
+	assertServiceInstanceReadyFalse(t, updatedObject, errorErrorCallingProvisionReason)
 	// The ready condition should be the only condition set.
 	updatedServiceInstance, ok := updatedObject.(*v1alpha1.ServiceInstance)
 	if !ok {
@@ -421,9 +463,9 @@ func TestReconcileServiceInstanceWithProvisionCallFailure(t *testing.T) {
 		t.Fatalf("Expected 1 condition, got %v", l)
 	}
 
-	if updatedServiceInstance.Status.Conditions[0].Type != v1alpha1.ServiceInstanceConditionReady && updatedServiceInstance.Status.Conditions[0].Status != v1alpha1.ConditionFalse {
-		t.Fatalf("Expected failed condition to be set")
-	}
+	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationProvision)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 0)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, true)
 
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
@@ -447,6 +489,8 @@ func TestReconcileServiceInstanceWithProvisionFailure(t *testing.T) {
 			},
 		},
 	})
+
+	setUpFakeCatalogToReturnUpdatedServiceInstance(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -480,9 +524,16 @@ func TestReconcileServiceInstanceWithProvisionFailure(t *testing.T) {
 	}
 
 	actions := fakeCatalogClient.Actions()
-	assertNumberOfActions(t, actions, 1)
+	assertNumberOfActions(t, actions, 3)
+
 	updatedObject := assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedObject)
+	assertServiceInstanceReadyFalse(t, updatedObject, provisioningReason)
+	assertServiceInstanceCurrentOperation(t, updatedObject, v1alpha1.ServiceInstanceOperationProvision)
+
+	assertGet(t, actions[1], instance)
+
+	updatedObject = assertUpdateStatus(t, actions[2], instance)
+	assertServiceInstanceReadyFalse(t, updatedObject, errorProvisionCallFailedReason)
 	updatedServiceInstance, ok := updatedObject.(*v1alpha1.ServiceInstance)
 	if !ok {
 		t.Fatalf("couldn't convert to *v1alpha1.ServiceInstance")
@@ -491,11 +542,9 @@ func TestReconcileServiceInstanceWithProvisionFailure(t *testing.T) {
 		t.Fatalf("Expected 2 conditions, got %v", l)
 	}
 
-	if updatedServiceInstance.Status.Conditions[0].Type != v1alpha1.ServiceInstanceConditionFailed && updatedServiceInstance.Status.Conditions[0].Status != v1alpha1.ConditionTrue {
-		t.Fatalf("Expected failed condition to be set")
-	}
-
-	// already verified 2nd condition Ready=false above
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
 
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
@@ -517,6 +566,8 @@ func TestReconcileServiceInstance(t *testing.T) {
 	})
 
 	addGetNamespaceReaction(fakeKubeClient)
+
+	setUpFakeCatalogToReturnUpdatedServiceInstance(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -551,7 +602,7 @@ func TestReconcileServiceInstance(t *testing.T) {
 	}
 
 	actions := fakeCatalogClient.Actions()
-	assertNumberOfActions(t, actions, 1)
+	assertNumberOfActions(t, actions, 3)
 
 	// verify no kube resources created.
 	// One single action comes from getting namespace uid
@@ -563,8 +614,18 @@ func TestReconcileServiceInstance(t *testing.T) {
 	}
 
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, provisioningReason)
+	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationProvision)
+
+	assertGet(t, actions[1], instance)
+
+	updatedServiceInstance = assertUpdateStatus(t, actions[2], instance)
 	assertServiceInstanceReadyTrue(t, updatedServiceInstance)
 	assertServiceInstanceDashboardURL(t, updatedServiceInstance, testDashboardURL)
+
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
 
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
@@ -591,6 +652,8 @@ func TestReconcileServiceInstanceAsynchronous(t *testing.T) {
 	})
 
 	addGetNamespaceReaction(fakeKubeClient)
+
+	setUpFakeCatalogToReturnUpdatedServiceInstance(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -623,12 +686,22 @@ func TestReconcileServiceInstanceAsynchronous(t *testing.T) {
 	})
 
 	actions := fakeCatalogClient.Actions()
-	assertNumberOfActions(t, actions, 1)
+	assertNumberOfActions(t, actions, 3)
+
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedServiceInstance)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, provisioningReason)
+	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationProvision)
+
+	assertGet(t, actions[1], instance)
+
+	updatedServiceInstance = assertUpdateStatus(t, actions[2], instance)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, asyncProvisioningReason)
 	assertAsyncOpInProgressTrue(t, updatedServiceInstance)
 	assertServiceInstanceLastOperation(t, updatedServiceInstance, testOperation)
 	assertServiceInstanceDashboardURL(t, updatedServiceInstance, testDashboardURL)
+	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationProvision)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 0)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, true)
 
 	// verify no kube resources created.
 	// One single action comes from getting namespace uid
@@ -656,6 +729,8 @@ func TestReconcileServiceInstanceAsynchronousNoOperation(t *testing.T) {
 	})
 
 	addGetNamespaceReaction(fakeKubeClient)
+
+	setUpFakeCatalogToReturnUpdatedServiceInstance(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -688,11 +763,21 @@ func TestReconcileServiceInstanceAsynchronousNoOperation(t *testing.T) {
 	})
 
 	actions := fakeCatalogClient.Actions()
-	assertNumberOfActions(t, actions, 1)
+	assertNumberOfActions(t, actions, 3)
+
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedServiceInstance)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, provisioningReason)
+	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationProvision)
+
+	assertGet(t, actions[1], instance)
+
+	updatedServiceInstance = assertUpdateStatus(t, actions[2], instance)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, asyncProvisioningReason)
 	assertAsyncOpInProgressTrue(t, updatedServiceInstance)
 	assertServiceInstanceLastOperation(t, updatedServiceInstance, "")
+	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationProvision)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 0)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, true)
 
 	// verify no kube resources created.
 	// One single action comes from getting namespace uid
@@ -739,7 +824,11 @@ func TestReconcileServiceInstanceNamespaceError(t *testing.T) {
 
 	actions := fakeCatalogClient.Actions()
 	assertNumberOfActions(t, actions, 1)
-	assertUpdateStatus(t, actions[0], instance)
+	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
+
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 0)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
 
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
@@ -757,6 +846,8 @@ func TestReconcileServiceInstanceDelete(t *testing.T) {
 			Response: &osb.DeprovisionResponse{},
 		},
 	})
+
+	setUpFakeCatalogToReturnUpdatedServiceInstance(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -792,17 +883,30 @@ func TestReconcileServiceInstanceDelete(t *testing.T) {
 	assertNumberOfActions(t, kubeActions, 0)
 
 	actions := fakeCatalogClient.Actions()
-	// The three actions should be:
-	// 0. Updating the ready condition
-	// 1. Get against the instance
-	// 2. Removing the finalizer
-	assertNumberOfActions(t, actions, 3)
+	// The actions should be:
+	// 0. Updating the current operation
+	// 1. Getting the updated instance
+	// 2. Updating the ready condition
+	// 3. Get against the instance
+	// 4. Removing the finalizer
+	assertNumberOfActions(t, actions, 5)
 
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedServiceInstance)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, deprovisioningReason)
+	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationDeprovision)
 
 	assertGet(t, actions[1], instance)
+
 	updatedServiceInstance = assertUpdateStatus(t, actions[2], instance)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, successDeprovisionReason)
+
+	assertGet(t, actions[3], instance)
+
+	updatedServiceInstance = assertUpdateStatus(t, actions[4], instance)
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
+
 	assertEmptyFinalizers(t, updatedServiceInstance)
 
 	events := getRecordedEvents(testController)
@@ -824,6 +928,8 @@ func TestReconcileServiceInstanceDeleteBlockedByCredentials(t *testing.T) {
 			Response: &osb.DeprovisionResponse{},
 		},
 	})
+
+	setUpFakeCatalogToReturnUpdatedServiceInstance(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -908,16 +1014,30 @@ func TestReconcileServiceInstanceDeleteBlockedByCredentials(t *testing.T) {
 
 	actions = fakeCatalogClient.Actions()
 
-	// The three actions should be:
-	// 0. Updating the ready condition
-	// 1. Get against the instance
-	// 2. Removing the finalizer
-	assertNumberOfActions(t, actions, 3)
+	// The actions should be:
+	// 0. Updating the current operation
+	// 1. Getting the updated instance
+	// 2. Updating the ready condition
+	// 3. Get against the instance
+	// 4. Removing the finalizer
+	assertNumberOfActions(t, actions, 5)
 
 	updatedServiceInstance = assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedServiceInstance)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, deprovisioningReason)
+	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationDeprovision)
+
 	assertGet(t, actions[1], instance)
+
 	updatedServiceInstance = assertUpdateStatus(t, actions[2], instance)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, successDeprovisionReason)
+
+	assertGet(t, actions[3], instance)
+
+	updatedServiceInstance = assertUpdateStatus(t, actions[4], instance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+
 	assertEmptyFinalizers(t, updatedServiceInstance)
 
 	events = getRecordedEvents(testController)
@@ -938,6 +1058,8 @@ func TestReconcileServiceInstanceDeleteAsynchronous(t *testing.T) {
 			},
 		},
 	})
+
+	setUpFakeCatalogToReturnUpdatedServiceInstance(fakeCatalogClient)
 
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -985,12 +1107,23 @@ func TestReconcileServiceInstanceDeleteAsynchronous(t *testing.T) {
 	assertNumberOfActions(t, kubeActions, 0)
 
 	actions := fakeCatalogClient.Actions()
-	// The action should be:
-	// 0. Updating the ready condition
-	assertNumberOfActions(t, actions, 1)
+	// The actions should be:
+	// 0. Updating the current operation
+	// 1. Get the updated instance
+	// 2. Updating the ready condition
+	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedServiceInstance)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, deprovisioningReason)
+	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationDeprovision)
+
+	assertGet(t, actions[1], instance)
+
+	updatedServiceInstance = assertUpdateStatus(t, actions[2], instance)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, asyncDeprovisioningReason)
+	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationDeprovision)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, true)
 
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
@@ -1043,6 +1176,10 @@ func TestReconcileServiceInstanceDeleteFailedInstance(t *testing.T) {
 	updatedServiceInstance := assertUpdateStatus(t, actions[1], instance)
 	assertEmptyFinalizers(t, updatedServiceInstance)
 
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
+
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 0)
 }
@@ -1061,6 +1198,8 @@ func TestReconcileServiceInstanceDeleteDoesNotInvokeServiceBroker(t *testing.T) 
 	instance := getTestServiceInstance()
 	instance.ObjectMeta.DeletionTimestamp = &metav1.Time{}
 	instance.ObjectMeta.Finalizers = []string{v1alpha1.FinalizerServiceCatalog}
+	instance.Generation = 0
+	instance.Status.ReconciledGeneration = 0
 
 	fakeCatalogClient.AddReactor("get", "serviceinstances", func(action clientgotesting.Action) (bool, runtime.Object, error) {
 		return true, instance, nil
@@ -1086,6 +1225,8 @@ func TestReconcileServiceInstanceDeleteDoesNotInvokeServiceBroker(t *testing.T) 
 	assertGet(t, actions[0], instance)
 	updatedServiceInstance := assertUpdateStatus(t, actions[1], instance)
 	assertEmptyFinalizers(t, updatedServiceInstance)
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
 
 	// no events because no external deprovision was needed
 	events := getRecordedEvents(testController)
@@ -1162,10 +1303,12 @@ func TestPollServiceInstanceInProgressProvisioningWithOperation(t *testing.T) {
 
 	brokerActions := fakeServiceBrokerClient.Actions()
 	assertNumberOfServiceBrokerActions(t, brokerActions, 1)
+	operationKey := osb.OperationKey(testOperation)
 	assertPollLastOperation(t, brokerActions[0], &osb.LastOperationRequest{
-		InstanceID: instanceGUID,
-		ServiceID:  strPtr(serviceClassGUID),
-		PlanID:     strPtr(planGUID),
+		InstanceID:   instanceGUID,
+		ServiceID:    strPtr(serviceClassGUID),
+		PlanID:       strPtr(planGUID),
+		OperationKey: &operationKey,
 	})
 
 	// there should have been 1 action to update the status with the last operation description
@@ -1174,6 +1317,10 @@ func TestPollServiceInstanceInProgressProvisioningWithOperation(t *testing.T) {
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
 	assertServiceInstanceReadyFalse(t, updatedServiceInstance)
 	assertAsyncOpInProgressTrue(t, updatedServiceInstance)
+
+	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationProvision)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 0)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, true)
 
 	// verify no kube resources created.
 	// No actions
@@ -1216,10 +1363,12 @@ func TestPollServiceInstanceSuccessProvisioningWithOperation(t *testing.T) {
 
 	brokerActions := fakeServiceBrokerClient.Actions()
 	assertNumberOfServiceBrokerActions(t, brokerActions, 1)
+	operationKey := osb.OperationKey(testOperation)
 	assertPollLastOperation(t, brokerActions[0], &osb.LastOperationRequest{
-		InstanceID: instanceGUID,
-		ServiceID:  strPtr(serviceClassGUID),
-		PlanID:     strPtr(planGUID),
+		InstanceID:   instanceGUID,
+		ServiceID:    strPtr(serviceClassGUID),
+		PlanID:       strPtr(planGUID),
+		OperationKey: &operationKey,
 	})
 
 	// verify no kube resources created.
@@ -1235,6 +1384,10 @@ func TestPollServiceInstanceSuccessProvisioningWithOperation(t *testing.T) {
 	// in place.
 	assertServiceInstanceReadyTrue(t, updatedServiceInstance)
 	assertAsyncOpInProgressFalse(t, updatedServiceInstance)
+
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
 }
 
 // TestPollServiceInstanceFailureProvisioningWithOperation tests polling an
@@ -1271,10 +1424,12 @@ func TestPollServiceInstanceFailureProvisioningWithOperation(t *testing.T) {
 
 	brokerActions := fakeServiceBrokerClient.Actions()
 	assertNumberOfServiceBrokerActions(t, brokerActions, 1)
+	operationKey := osb.OperationKey(testOperation)
 	assertPollLastOperation(t, brokerActions[0], &osb.LastOperationRequest{
-		InstanceID: instanceGUID,
-		ServiceID:  strPtr(serviceClassGUID),
-		PlanID:     strPtr(planGUID),
+		InstanceID:   instanceGUID,
+		ServiceID:    strPtr(serviceClassGUID),
+		PlanID:       strPtr(planGUID),
+		OperationKey: &operationKey,
 	})
 
 	// verify no kube resources created.
@@ -1291,6 +1446,10 @@ func TestPollServiceInstanceFailureProvisioningWithOperation(t *testing.T) {
 	assertServiceInstanceReadyFalse(t, updatedServiceInstance)
 	assertServiceInstanceCondition(t, updatedServiceInstance, v1alpha1.ServiceInstanceConditionFailed, v1alpha1.ConditionTrue)
 	assertAsyncOpInProgressFalse(t, updatedServiceInstance)
+
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
 }
 
 // TestPollServiceInstanceInProgressDeprovisioningWithOperationNoFinalizer tests
@@ -1328,10 +1487,12 @@ func TestPollServiceInstanceInProgressDeprovisioningWithOperationNoFinalizer(t *
 
 	brokerActions := fakeServiceBrokerClient.Actions()
 	assertNumberOfServiceBrokerActions(t, brokerActions, 1)
+	operationKey := osb.OperationKey(testOperation)
 	assertPollLastOperation(t, brokerActions[0], &osb.LastOperationRequest{
-		InstanceID: instanceGUID,
-		ServiceID:  strPtr(serviceClassGUID),
-		PlanID:     strPtr(planGUID),
+		InstanceID:   instanceGUID,
+		ServiceID:    strPtr(serviceClassGUID),
+		PlanID:       strPtr(planGUID),
+		OperationKey: &operationKey,
 	})
 
 	// there should have been 1 action to update the instance status with the last operation
@@ -1341,6 +1502,10 @@ func TestPollServiceInstanceInProgressDeprovisioningWithOperationNoFinalizer(t *
 	action := actions[0]
 	updatedServiceInstance := assertUpdateStatus(t, action, instance)
 	assertServiceInstanceReadyFalse(t, updatedServiceInstance, asyncDeprovisioningReason)
+
+	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationDeprovision)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, true)
 
 	// verify no kube resources created.
 	// No actions
@@ -1382,10 +1547,12 @@ func TestPollServiceInstanceSuccessDeprovisioningWithOperationNoFinalizer(t *tes
 
 	brokerActions := fakeServiceBrokerClient.Actions()
 	assertNumberOfServiceBrokerActions(t, brokerActions, 1)
+	operationKey := osb.OperationKey(testOperation)
 	assertPollLastOperation(t, brokerActions[0], &osb.LastOperationRequest{
-		InstanceID: instanceGUID,
-		ServiceID:  strPtr(serviceClassGUID),
-		PlanID:     strPtr(planGUID),
+		InstanceID:   instanceGUID,
+		ServiceID:    strPtr(serviceClassGUID),
+		PlanID:       strPtr(planGUID),
+		OperationKey: &operationKey,
 	})
 
 	// verify no kube resources created.
@@ -1400,6 +1567,10 @@ func TestPollServiceInstanceSuccessDeprovisioningWithOperationNoFinalizer(t *tes
 	// ServiceInstance should have been deprovisioned
 	assertServiceInstanceReadyCondition(t, updatedServiceInstance, v1alpha1.ConditionFalse, successDeprovisionReason)
 	assertAsyncOpInProgressFalse(t, updatedServiceInstance)
+
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
 
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
@@ -1443,10 +1614,12 @@ func TestPollServiceInstanceFailureDeprovisioningWithOperation(t *testing.T) {
 
 	brokerActions := fakeServiceBrokerClient.Actions()
 	assertNumberOfServiceBrokerActions(t, brokerActions, 1)
+	operationKey := osb.OperationKey(testOperation)
 	assertPollLastOperation(t, brokerActions[0], &osb.LastOperationRequest{
-		InstanceID: instanceGUID,
-		ServiceID:  strPtr(serviceClassGUID),
-		PlanID:     strPtr(planGUID),
+		InstanceID:   instanceGUID,
+		ServiceID:    strPtr(serviceClassGUID),
+		PlanID:       strPtr(planGUID),
+		OperationKey: &operationKey,
 	})
 
 	// verify no kube resources created.
@@ -1463,6 +1636,10 @@ func TestPollServiceInstanceFailureDeprovisioningWithOperation(t *testing.T) {
 	assertServiceInstanceReadyCondition(t, updatedServiceInstance, v1alpha1.ConditionUnknown, errorDeprovisionCalledReason)
 	assertServiceInstanceCondition(t, updatedServiceInstance, v1alpha1.ServiceInstanceConditionFailed, v1alpha1.ConditionTrue)
 	assertAsyncOpInProgressFalse(t, updatedServiceInstance)
+
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
 
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
@@ -1507,10 +1684,12 @@ func TestPollServiceInstanceStatusGoneDeprovisioningWithOperationNoFinalizer(t *
 
 	brokerActions := fakeServiceBrokerClient.Actions()
 	assertNumberOfServiceBrokerActions(t, brokerActions, 1)
+	operationKey := osb.OperationKey(testOperation)
 	assertPollLastOperation(t, brokerActions[0], &osb.LastOperationRequest{
-		InstanceID: instanceGUID,
-		ServiceID:  strPtr(serviceClassGUID),
-		PlanID:     strPtr(planGUID),
+		InstanceID:   instanceGUID,
+		ServiceID:    strPtr(serviceClassGUID),
+		PlanID:       strPtr(planGUID),
+		OperationKey: &operationKey,
 	})
 
 	// verify no kube resources created.
@@ -1525,6 +1704,10 @@ func TestPollServiceInstanceStatusGoneDeprovisioningWithOperationNoFinalizer(t *
 	// ServiceInstance should have been deprovisioned
 	assertServiceInstanceReadyCondition(t, updatedServiceInstance, v1alpha1.ConditionFalse, successDeprovisionReason)
 	assertAsyncOpInProgressFalse(t, updatedServiceInstance)
+
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
 
 	events := getRecordedEvents(testController)
 	assertNumEvents(t, events, 1)
@@ -1568,10 +1751,12 @@ func TestPollServiceInstanceServiceBrokerError(t *testing.T) {
 
 	brokerActions := fakeServiceBrokerClient.Actions()
 	assertNumberOfServiceBrokerActions(t, brokerActions, 1)
+	operationKey := osb.OperationKey(testOperation)
 	assertPollLastOperation(t, brokerActions[0], &osb.LastOperationRequest{
-		InstanceID: instanceGUID,
-		ServiceID:  strPtr(serviceClassGUID),
-		PlanID:     strPtr(planGUID),
+		InstanceID:   instanceGUID,
+		ServiceID:    strPtr(serviceClassGUID),
+		PlanID:       strPtr(planGUID),
+		OperationKey: &operationKey,
 	})
 
 	// verify no kube resources created.
@@ -1629,10 +1814,12 @@ func TestPollServiceInstanceSuccessDeprovisioningWithOperationWithFinalizer(t *t
 
 	brokerActions := fakeServiceBrokerClient.Actions()
 	assertNumberOfServiceBrokerActions(t, brokerActions, 1)
+	operationKey := osb.OperationKey(testOperation)
 	assertPollLastOperation(t, brokerActions[0], &osb.LastOperationRequest{
-		InstanceID: instanceGUID,
-		ServiceID:  strPtr(serviceClassGUID),
-		PlanID:     strPtr(planGUID),
+		InstanceID:   instanceGUID,
+		ServiceID:    strPtr(serviceClassGUID),
+		PlanID:       strPtr(planGUID),
+		OperationKey: &operationKey,
 	})
 
 	// verify no kube resources created.
@@ -1649,6 +1836,11 @@ func TestPollServiceInstanceSuccessDeprovisioningWithOperationWithFinalizer(t *t
 
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
 	assertServiceInstanceReadyCondition(t, updatedServiceInstance, v1alpha1.ConditionFalse, successDeprovisionReason)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, successDeprovisionReason)
+
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
+	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
 
 	// ServiceInstance should have been deprovisioned
 	assertGet(t, actions[1], instance)
@@ -1677,6 +1869,7 @@ func TestReconcileServiceInstanceSuccessOnFinalRetry(t *testing.T) {
 	sharedInformers.ServicePlans().Informer().GetStore().Add(getTestServicePlan())
 
 	instance := getTestServiceInstance()
+	instance.Status.CurrentOperation = v1alpha1.ServiceInstanceOperationProvision
 	startTime := metav1.NewTime(time.Now().Add(-7 * 24 * time.Hour))
 	instance.Status.OperationStartTime = &startTime
 
@@ -1702,6 +1895,9 @@ func TestReconcileServiceInstanceSuccessOnFinalRetry(t *testing.T) {
 
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
 	assertServiceInstanceReadyTrue(t, updatedServiceInstance)
+
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
 	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
 
 	// verify no kube resources created
@@ -1736,11 +1932,12 @@ func TestReconcileServiceInstanceFailureOnFinalRetry(t *testing.T) {
 	sharedInformers.ServicePlans().Informer().GetStore().Add(getTestServicePlan())
 
 	instance := getTestServiceInstance()
+	instance.Status.CurrentOperation = v1alpha1.ServiceInstanceOperationProvision
 	startTime := metav1.NewTime(time.Now().Add(-7 * 24 * time.Hour))
 	instance.Status.OperationStartTime = &startTime
 
 	if err := testController.reconcileServiceInstance(instance); err != nil {
-		t.Fatalf("Should have return no error because the retry duration has elapsed: %v", err)
+		t.Fatalf("Should have returned no error because the retry duration has elapsed: %v", err)
 	}
 
 	brokerActions := fakeServiceBrokerClient.Actions()
@@ -1769,7 +1966,7 @@ func TestReconcileServiceInstanceFailureOnFinalRetry(t *testing.T) {
 	assertNumberOfActions(t, actions, 1)
 
 	updatedObject := assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedObject)
+	assertServiceInstanceReadyFalse(t, updatedObject, errorErrorCallingProvisionReason)
 	assertServiceInstanceCondition(t, updatedObject, v1alpha1.ServiceInstanceConditionFailed, v1alpha1.ConditionTrue, errorReconciliationRetryTimeoutReason)
 	assertServiceInstanceOperationStartTimeSet(t, updatedObject, false)
 
@@ -1823,10 +2020,12 @@ func TestPollServiceInstanceSuccessOnFinalRetry(t *testing.T) {
 
 	brokerActions := fakeServiceBrokerClient.Actions()
 	assertNumberOfServiceBrokerActions(t, brokerActions, 1)
+	operationKey := osb.OperationKey(testOperation)
 	assertPollLastOperation(t, brokerActions[0], &osb.LastOperationRequest{
-		InstanceID: instanceGUID,
-		ServiceID:  strPtr(serviceClassGUID),
-		PlanID:     strPtr(planGUID),
+		InstanceID:   instanceGUID,
+		ServiceID:    strPtr(serviceClassGUID),
+		PlanID:       strPtr(planGUID),
+		OperationKey: &operationKey,
 	})
 
 	// verify no kube resources created.
@@ -1880,10 +2079,12 @@ func TestPollServiceInstanceFailureOnFinalRetry(t *testing.T) {
 
 	brokerActions := fakeServiceBrokerClient.Actions()
 	assertNumberOfServiceBrokerActions(t, brokerActions, 1)
+	operationKey := osb.OperationKey(testOperation)
 	assertPollLastOperation(t, brokerActions[0], &osb.LastOperationRequest{
-		InstanceID: instanceGUID,
-		ServiceID:  strPtr(serviceClassGUID),
-		PlanID:     strPtr(planGUID),
+		InstanceID:   instanceGUID,
+		ServiceID:    strPtr(serviceClassGUID),
+		PlanID:       strPtr(planGUID),
+		OperationKey: &operationKey,
 	})
 
 	// there should have been 2 actions:
@@ -1898,12 +2099,41 @@ func TestPollServiceInstanceFailureOnFinalRetry(t *testing.T) {
 	updatedServiceInstance = assertUpdateStatus(t, actions[1], instance)
 	assertServiceInstanceCondition(t, updatedServiceInstance, v1alpha1.ServiceInstanceConditionFailed, v1alpha1.ConditionTrue, errorReconciliationRetryTimeoutReason)
 	assertAsyncOpInProgressFalse(t, updatedServiceInstance)
+
+	assertServiceInstanceCurrentOperationClear(t, updatedServiceInstance)
+	assertServiceInstanceReconciledGeneration(t, updatedServiceInstance, 1)
 	assertServiceInstanceOperationStartTimeSet(t, updatedServiceInstance, false)
 
 	// verify no kube resources created.
 	// No actions
 	kubeActions := fakeKubeClient.Actions()
 	assertNumberOfActions(t, kubeActions, 0)
+}
+
+// TestReconcileServiceInstanceWithStatusUpdateError verifies that the reconciler
+// returns an error when there is a conflict updating the status of the resource
+func TestReconcileServiceInstanceWithStatusUpdateError(t *testing.T) {
+	fakeKubeClient, fakeCatalogClient, _, testController, sharedInformers := newTestController(t, fakeosb.FakeClientConfiguration{
+		ProvisionReaction: &fakeosb.ProvisionReaction{
+			Response: &osb.ProvisionResponse{},
+		},
+	})
+	addGetNamespaceReaction(fakeKubeClient)
+	setUpFakeCatalogToReturnUpdatedServiceInstance(fakeCatalogClient)
+	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
+	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
+	instance := getTestServiceInstance()
+	fakeCatalogClient.AddReactor("update", "serviceinstances", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("update error")
+	})
+
+	err := testController.reconcileServiceInstance(instance)
+	if err == nil {
+		t.Fatalf("expected error from but got none")
+	}
+	if e, a := "update error", err.Error(); e != a {
+		t.Fatalf("unexpected error returned: expected %q, got %q", e, a)
+	}
 }
 
 // TestSetServiceInstanceCondition ensures that with the expected conditions the
@@ -2234,7 +2464,7 @@ func TestReconcileInstanceUsingOriginatingIdentity(t *testing.T) {
 				defer utilfeature.DefaultFeatureGate.Set(fmt.Sprintf("%v=false", scfeatures.OriginatingIdentity))
 			}
 
-			fakeKubeClient, _, fakeBrokerClient, testController, sharedInformers := newTestController(t, fakeosb.FakeClientConfiguration{
+			fakeKubeClient, fakeCatalogClient, fakeBrokerClient, testController, sharedInformers := newTestController(t, fakeosb.FakeClientConfiguration{
 				ProvisionReaction: &fakeosb.ProvisionReaction{
 					Response: &osb.ProvisionResponse{
 						DashboardURL: &testDashboardURL,
@@ -2243,6 +2473,8 @@ func TestReconcileInstanceUsingOriginatingIdentity(t *testing.T) {
 			})
 
 			addGetNamespaceReaction(fakeKubeClient)
+
+			setUpFakeCatalogToReturnUpdatedServiceInstance(fakeCatalogClient)
 
 			sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 			sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -2286,6 +2518,8 @@ func TestReconcileInstanceDeleteUsingOriginatingIdentity(t *testing.T) {
 					Response: &osb.DeprovisionResponse{},
 				},
 			})
+
+			setUpFakeCatalogToReturnUpdatedServiceInstance(fakeCatalogClient)
 
 			sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 			sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
@@ -2371,4 +2605,18 @@ func TestPollInstanceUsingOriginatingIdentity(t *testing.T) {
 			assertOriginatingIdentity(t, expectedOriginatingIdentity, actualRequest.OriginatingIdentity)
 		}()
 	}
+}
+
+func setUpFakeCatalogToReturnUpdatedServiceInstance(fakeCatalogClient *servicecatalogclientset.Clientset) {
+	var instanceInStore *v1alpha1.ServiceInstance
+	fakeCatalogClient.AddReactor("get", "serviceinstances", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		if instanceInStore == nil {
+			return true, nil, errors.New("not found")
+		}
+		return true, instanceInStore, nil
+	})
+	fakeCatalogClient.AddReactor("update", "serviceinstances", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		instanceInStore = action.(clientgotesting.UpdateAction).GetObject().(*v1alpha1.ServiceInstance)
+		return false, nil, nil
+	})
 }

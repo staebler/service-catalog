@@ -501,9 +501,6 @@ func getTestServiceInstanceWithFailedStatus() *v1alpha1.ServiceInstance {
 // getTestServiceInstanceAsync returns an instance in async mode
 func getTestServiceInstanceAsyncProvisioning(operation string) *v1alpha1.ServiceInstance {
 	instance := getTestServiceInstance()
-	if operation != "" {
-		instance.Status.LastOperation = &operation
-	}
 	operationStartTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
 	instance.Status = v1alpha1.ServiceInstanceStatus{
 		Conditions: []v1alpha1.ServiceInstanceCondition{{
@@ -514,6 +511,10 @@ func getTestServiceInstanceAsyncProvisioning(operation string) *v1alpha1.Service
 		}},
 		AsyncOpInProgress:  true,
 		OperationStartTime: &operationStartTime,
+		CurrentOperation:   v1alpha1.ServiceInstanceOperationProvision,
+	}
+	if operation != "" {
+		instance.Status.LastOperation = &operation
 	}
 
 	return instance
@@ -521,9 +522,6 @@ func getTestServiceInstanceAsyncProvisioning(operation string) *v1alpha1.Service
 
 func getTestServiceInstanceAsyncDeprovisioning(operation string) *v1alpha1.ServiceInstance {
 	instance := getTestServiceInstance()
-	if operation != "" {
-		instance.Status.LastOperation = &operation
-	}
 	operationStartTime := metav1.NewTime(time.Now().Add(-1 * time.Hour))
 	instance.Status = v1alpha1.ServiceInstanceStatus{
 		Conditions: []v1alpha1.ServiceInstanceCondition{{
@@ -532,8 +530,13 @@ func getTestServiceInstanceAsyncDeprovisioning(operation string) *v1alpha1.Servi
 			Message:            "Deprovisioning",
 			LastTransitionTime: metav1.NewTime(time.Now().Add(-5 * time.Minute)),
 		}},
-		AsyncOpInProgress:  true,
-		OperationStartTime: &operationStartTime,
+		AsyncOpInProgress:    true,
+		OperationStartTime:   &operationStartTime,
+		CurrentOperation:     v1alpha1.ServiceInstanceOperationDeprovision,
+		ReconciledGeneration: 1,
+	}
+	if operation != "" {
+		instance.Status.LastOperation = &operation
 	}
 
 	// Set the deleted timestamp to simulate deletion
@@ -1456,6 +1459,21 @@ func assertServiceInstanceConditionsCount(t *testing.T, obj runtime.Object, coun
 	}
 }
 
+func assertServiceInstanceCurrentOperationClear(t *testing.T, obj runtime.Object) {
+	assertServiceInstanceCurrentOperation(t, obj, "")
+}
+
+func assertServiceInstanceCurrentOperation(t *testing.T, obj runtime.Object, currentOperation v1alpha1.ServiceInstanceOperation) {
+	instance, ok := obj.(*v1alpha1.ServiceInstance)
+	if !ok {
+		fatalf(t, "Couldn't convert object %+v into a *v1alpha1.ServiceInstance", obj)
+	}
+
+	if e, a := currentOperation, instance.Status.CurrentOperation; e != a {
+		fatalf(t, "unexpected current operation: expected %q, got %q", e, a)
+	}
+}
+
 func assertServiceInstanceReconciledGeneration(t *testing.T, obj runtime.Object, reconciledGeneration int64) {
 	instance, ok := obj.(*v1alpha1.ServiceInstance)
 	if !ok {
@@ -1588,6 +1606,21 @@ func assertServiceInstanceCredentialOperationStartTimeSet(t *testing.T, obj runt
 		} else {
 			fatalf(t, "expected OperationStartTime to be nil, but was not")
 		}
+	}
+}
+
+func assertServiceInstanceCredentialCurrentOperationClear(t *testing.T, obj runtime.Object) {
+	assertServiceInstanceCredentialCurrentOperation(t, obj, "")
+}
+
+func assertServiceInstanceCredentialCurrentOperation(t *testing.T, obj runtime.Object, currentOperation v1alpha1.ServiceInstanceCredentialOperation) {
+	instance, ok := obj.(*v1alpha1.ServiceInstanceCredential)
+	if !ok {
+		fatalf(t, "Couldn't convert object %+v into a *v1alpha1.ServiceInstanceCredential", obj)
+	}
+
+	if e, a := currentOperation, instance.Status.CurrentOperation; e != a {
+		fatalf(t, "unexpected current operation: expected %q, got %q", e, a)
 	}
 }
 
