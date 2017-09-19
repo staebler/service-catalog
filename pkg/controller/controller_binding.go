@@ -196,10 +196,7 @@ func (c *controller) reconcileServiceInstanceCredential(binding *v1alpha1.Servic
 			errorNonbindableServiceClassReason,
 			s,
 		)
-		if err := c.updateServiceInstanceCredentialStatus(toUpdate); err != nil {
-			return err
-		}
-		return nil
+		return c.updateServiceInstanceCredentialStatus(toUpdate)
 	}
 
 	if binding.DeletionTimestamp == nil { // Add or update
@@ -255,10 +252,7 @@ func (c *controller) reconcileServiceInstanceCredential(binding *v1alpha1.Servic
 				errorServiceInstanceNotReadyReason,
 				s,
 			)
-			if err := c.updateServiceInstanceCredentialStatus(toUpdate); err != nil {
-				return err
-			}
-			return nil
+			return c.updateServiceInstanceCredentialStatus(toUpdate)
 		}
 
 		appGUID := string(ns.UID)
@@ -337,10 +331,7 @@ func (c *controller) reconcileServiceInstanceCredential(binding *v1alpha1.Servic
 					errorBindCallReason,
 					"Bind call failed. "+s)
 				c.clearServiceInstanceCredentialCurrentOperation(toUpdate)
-				if err := c.updateServiceInstanceCredentialStatus(toUpdate); err != nil {
-					return err
-				}
-				return nil
+				return c.updateServiceInstanceCredentialStatus(toUpdate)
 			}
 
 			s := fmt.Sprintf("Error creating ServiceInstanceCredential \"%s/%s\" for ServiceInstance \"%s/%s\" of ServiceClass %q at ServiceBroker %q: %s", binding.Name, binding.Namespace, instance.Namespace, instance.Name, serviceClass.Name, brokerName, err)
@@ -363,10 +354,7 @@ func (c *controller) reconcileServiceInstanceCredential(binding *v1alpha1.Servic
 					errorReconciliationRetryTimeoutReason,
 					s)
 				c.clearServiceInstanceCredentialCurrentOperation(toUpdate)
-				if err := c.updateServiceInstanceCredentialStatus(toUpdate); err != nil {
-					return err
-				}
-				return nil
+				return c.updateServiceInstanceCredentialStatus(toUpdate)
 			}
 
 			c.updateServiceInstanceCredentialStatus(toUpdate)
@@ -429,11 +417,7 @@ func (c *controller) reconcileServiceInstanceCredential(binding *v1alpha1.Servic
 
 		glog.V(5).Infof("Successfully bound to ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v", instance.Namespace, instance.Name, serviceClass.Name, brokerName)
 
-		if err := c.updateServiceInstanceCredentialStatus(toUpdate); err != nil {
-			return err
-		}
-
-		return nil
+		return c.updateServiceInstanceCredentialStatus(toUpdate)
 	}
 
 	// All updates not having a DeletingTimestamp will have been handled above
@@ -529,10 +513,7 @@ func (c *controller) reconcileServiceInstanceCredential(binding *v1alpha1.Servic
 					errorUnbindCallReason,
 					"Unbind call failed. "+s)
 				c.clearServiceInstanceCredentialCurrentOperation(toUpdate)
-				if err := c.updateServiceInstanceCredentialStatus(toUpdate); err != nil {
-					return err
-				}
-				return nil
+				return c.updateServiceInstanceCredentialStatus(toUpdate)
 			}
 			s := fmt.Sprintf(
 				"Error unbinding ServiceInstanceCredential \"%s/%s\" for ServiceInstance \"%s/%s\" of ServiceClass %q at ServiceBroker %q: %s",
@@ -563,10 +544,7 @@ func (c *controller) reconcileServiceInstanceCredential(binding *v1alpha1.Servic
 					errorReconciliationRetryTimeoutReason,
 					s)
 				c.clearServiceInstanceCredentialCurrentOperation(toUpdate)
-				if err := c.updateServiceInstanceCredentialStatus(toUpdate); err != nil {
-					return err
-				}
-				return nil
+				return c.updateServiceInstanceCredentialStatus(toUpdate)
 			}
 
 			if err := c.updateServiceInstanceCredentialStatus(toUpdate); err != nil {

@@ -192,10 +192,7 @@ func (c *controller) reconcileServiceInstanceDelete(instance *v1alpha1.ServiceIn
 				v1alpha1.ConditionFalse,
 				errorDeprovisionCalledReason,
 				"Delete instance failed. "+s)
-			if err := c.updateServiceInstanceStatus(toUpdate); err != nil {
-				return err
-			}
-			return nil
+			return c.updateServiceInstanceStatus(toUpdate)
 		}
 	}
 
@@ -318,12 +315,9 @@ func (c *controller) reconcileServiceInstanceDelete(instance *v1alpha1.ServiceIn
 					errorDeprovisionCalledReason,
 					s,
 				)
-				if err := c.updateServiceInstanceStatus(toUpdate); err != nil {
-					return err
-				}
-
-				// Return nil so that the reconciler does not retry the deprovision
-				return nil
+				// Return nil so that the reconciler does not retry the deprovision,
+				// assuming update of status is successful
+				return c.updateServiceInstanceStatus(toUpdate)
 			}
 
 			s := fmt.Sprintf(
@@ -357,10 +351,7 @@ func (c *controller) reconcileServiceInstanceDelete(instance *v1alpha1.ServiceIn
 					errorReconciliationRetryTimeoutReason,
 					s)
 				c.clearServiceInstanceCurrentOperation(toUpdate)
-				if err := c.updateServiceInstanceStatus(toUpdate); err != nil {
-					return err
-				}
-				return nil
+				return c.updateServiceInstanceStatus(toUpdate)
 			}
 
 			if err := c.updateServiceInstanceStatus(toUpdate); err != nil {
@@ -668,10 +659,7 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 				errorReconciliationRetryTimeoutReason,
 				s)
 			c.clearServiceInstanceCurrentOperation(toUpdate)
-			if err := c.updateServiceInstanceStatus(toUpdate); err != nil {
-				return err
-			}
-			return nil
+			return c.updateServiceInstanceStatus(toUpdate)
 		}
 
 		if err := c.updateServiceInstanceStatus(toUpdate); err != nil {
@@ -840,11 +828,7 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 			c.recorder.Event(instance, api.EventTypeNormal, successDeprovisionReason, successDeprovisionMessage)
 			glog.V(5).Infof("Successfully deprovisioned ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v", instance.Namespace, instance.Name, serviceClass.Name, brokerName)
 
-			err = c.finishPollingServiceInstance(instance)
-			if err != nil {
-				return err
-			}
-			return nil
+			return c.finishPollingServiceInstance(instance)
 		}
 
 		// We got some kind of error from the broker.  While polling last
