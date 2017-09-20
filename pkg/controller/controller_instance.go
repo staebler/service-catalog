@@ -272,14 +272,16 @@ func (c *controller) reconcileServiceInstanceDelete(instance *v1alpha1.ServiceIn
 			if err != nil {
 				s := fmt.Sprintf(`Error recording current operation for deprovisioning of ServiceInstance "%v/%v": %v`, instance.Namespace, instance.Name, err)
 				glog.Warning(s)
-				c.updateServiceInstanceCondition(
+				c.recorder.Event(instance, api.EventTypeWarning, errorRecordingCurrentOperationReason, s)
+				if err := c.updateServiceInstanceCondition(
 					toUpdate,
 					v1alpha1.ServiceInstanceConditionReady,
 					v1alpha1.ConditionFalse,
 					errorRecordingCurrentOperationReason,
 					s,
-				)
-				c.recorder.Event(instance, api.EventTypeWarning, errorRecordingCurrentOperationReason, s)
+				); err != nil {
+					return err
+				}
 				return err
 			}
 		}
@@ -331,6 +333,7 @@ func (c *controller) reconcileServiceInstanceDelete(instance *v1alpha1.ServiceIn
 				httpErr.Description,
 			)
 			glog.Warning(s)
+			c.recorder.Event(instance, api.EventTypeWarning, errorDeprovisionCalledReason, s)
 
 			setServiceInstanceCondition(
 				toUpdate,
@@ -338,8 +341,6 @@ func (c *controller) reconcileServiceInstanceDelete(instance *v1alpha1.ServiceIn
 				v1alpha1.ConditionUnknown,
 				errorDeprovisionCalledReason,
 				"Deprovision call failed. "+s)
-
-			c.recorder.Event(instance, api.EventTypeWarning, errorDeprovisionCalledReason, s)
 
 			if !time.Now().Before(toUpdate.Status.OperationStartTime.Time.Add(c.reconciliationRetryDuration)) {
 				s := fmt.Sprintf(`Stopping reconciliation retries on ServiceInstance "%v/%v" because too much time has elapsed`, instance.Namespace, instance.Name)
@@ -362,6 +363,7 @@ func (c *controller) reconcileServiceInstanceDelete(instance *v1alpha1.ServiceIn
 
 		if response.Async {
 			glog.V(5).Infof("Received asynchronous de-provisioning response for ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v: response: %+v", instance.Namespace, instance.Name, serviceClass.Name, brokerName, response)
+
 			if response.OperationKey != nil && *response.OperationKey != "" {
 				key := string(*response.OperationKey)
 				toUpdate.Status.LastOperation = &key
@@ -571,6 +573,7 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 		if err != nil {
 			s := fmt.Sprintf(`Error building originating identity headers for provisioning ServiceInstance "%v/%v": %v`, instance.Namespace, instance.Name, err)
 			glog.Warning(s)
+			c.recorder.Event(instance, api.EventTypeWarning, errorWithOriginatingIdentity, s)
 
 			setServiceInstanceCondition(
 				toUpdate,
@@ -579,9 +582,10 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 				errorWithOriginatingIdentity,
 				s,
 			)
-			c.updateServiceInstanceStatus(toUpdate)
+			if err := c.updateServiceInstanceStatus(toUpdate); err != nil {
+				return err
+			}
 
-			c.recorder.Event(instance, api.EventTypeWarning, errorWithOriginatingIdentity, s)
 			return err
 		}
 		request.OriginatingIdentity = originatingIdentity
@@ -592,14 +596,16 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 		if err != nil {
 			s := fmt.Sprintf(`Error recording current operation for provisioning of ServiceInstance "%v/%v": %v`, instance.Namespace, instance.Name, err)
 			glog.Warning(s)
-			c.updateServiceInstanceCondition(
+			c.recorder.Event(instance, api.EventTypeWarning, errorRecordingCurrentOperationReason, s)
+			if err := c.updateServiceInstanceCondition(
 				toUpdate,
 				v1alpha1.ServiceInstanceConditionReady,
 				v1alpha1.ConditionFalse,
 				errorRecordingCurrentOperationReason,
 				s,
-			)
-			c.recorder.Event(instance, api.EventTypeWarning, errorRecordingCurrentOperationReason, s)
+			); err != nil {
+				return err
+			}
 			return err
 		}
 	}
@@ -615,6 +621,7 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 			// should not be retried; set the Failed condition.
 			s := fmt.Sprintf("Error provisioning ServiceInstance \"%s/%s\" of ServiceClass %q at ServiceBroker %q: %s", instance.Namespace, instance.Name, serviceClass.Name, brokerName, httpErr)
 			glog.Warning(s)
+			c.recorder.Event(instance, api.EventTypeWarning, errorProvisionCallFailedReason, s)
 
 			setServiceInstanceCondition(
 				toUpdate,
@@ -629,17 +636,12 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 				errorProvisionCallFailedReason,
 				"ServiceBroker returned a failure for provision call; operation will not be retried: "+s)
 			c.clearServiceInstanceCurrentOperation(toUpdate)
-			err := c.updateServiceInstanceStatus(toUpdate)
-			if err != nil {
-				return err
-			}
-
-			c.recorder.Event(instance, api.EventTypeWarning, errorProvisionCallFailedReason, s)
-			return nil
+			return c.updateServiceInstanceStatus(toUpdate)
 		}
 
 		s := fmt.Sprintf("Error provisioning ServiceInstance \"%s/%s\" of ServiceClass %q at ServiceBroker %q: %s", instance.Namespace, instance.Name, serviceClass.Name, brokerName, err)
 		glog.Warning(s)
+		c.recorder.Event(instance, api.EventTypeWarning, errorErrorCallingProvisionReason, s)
 
 		setServiceInstanceCondition(
 			toUpdate,
@@ -647,7 +649,6 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 			v1alpha1.ConditionFalse,
 			errorErrorCallingProvisionReason,
 			"Provision call failed and will be retried: "+s)
-		c.recorder.Event(instance, api.EventTypeWarning, errorErrorCallingProvisionReason, s)
 
 		if !time.Now().Before(toUpdate.Status.OperationStartTime.Time.Add(c.reconciliationRetryDuration)) {
 			s := fmt.Sprintf(`Stopping reconciliation retries on ServiceInstance "%v/%v" because too much time has elapsed`, instance.Namespace, instance.Name)
@@ -785,8 +786,21 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 		if err != nil {
 			s := fmt.Sprintf(`Error building originating identity headers for polling last operation of ServiceInstance "%v/%v": %v`, instance.Namespace, instance.Name, err)
 			glog.Warning(s)
-
 			c.recorder.Event(instance, api.EventTypeWarning, errorWithOriginatingIdentity, s)
+
+			clone, cloneErr := api.Scheme.DeepCopy(instance)
+			if cloneErr != nil {
+				return cloneErr
+			}
+			toUpdate := clone.(*v1alpha1.ServiceInstance)
+			setServiceInstanceCondition(toUpdate,
+				v1alpha1.ServiceInstanceConditionReady,
+				v1alpha1.ConditionFalse,
+				errorWithOriginatingIdentity,
+				s)
+			if err := c.updateServiceInstanceStatus(toUpdate); err != nil {
+				return err
+			}
 			return err
 		}
 		request.OriginatingIdentity = originatingIdentity
@@ -800,6 +814,8 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 		// this is considered a success as per the spec, so mark as deleted
 		// and remove any finalizers.
 		if osb.IsGoneError(err) && deleting {
+			c.recorder.Event(instance, api.EventTypeNormal, successDeprovisionReason, successDeprovisionMessage)
+
 			clone, err := api.Scheme.DeepCopy(instance)
 			if err != nil {
 				return err
@@ -825,7 +841,6 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 				}
 			}
 
-			c.recorder.Event(instance, api.EventTypeNormal, successDeprovisionReason, successDeprovisionMessage)
 			glog.V(5).Infof("Successfully deprovisioned ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v", instance.Namespace, instance.Name, serviceClass.Name, brokerName)
 
 			return c.finishPollingServiceInstance(instance)
@@ -971,7 +986,9 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 					return err
 				}
 			}
+
 			c.recorder.Event(instance, api.EventTypeNormal, successDeprovisionReason, successDeprovisionMessage)
+
 			glog.V(5).Infof("Successfully deprovisioned ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v", instance.Namespace, instance.Name, serviceClass.Name, brokerName)
 		} else {
 			// Create/Update for InstanceCredential has completed successfully,
@@ -999,6 +1016,7 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 			description = *response.Description
 		}
 		s := fmt.Sprintf("Error deprovisioning ServiceInstance \"%s/%s\" of ServiceClass %q at ServiceBroker %q: %q", instance.Namespace, instance.Name, serviceClass.Name, brokerName, description)
+		c.recorder.Event(instance, api.EventTypeWarning, errorDeprovisionCalledReason, s)
 
 		clone, err := api.Scheme.DeepCopy(instance)
 		if err != nil {
@@ -1032,7 +1050,6 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 		if err := c.updateServiceInstanceStatus(toUpdate); err != nil {
 			return err
 		}
-		c.recorder.Event(instance, api.EventTypeWarning, errorDeprovisionCalledReason, s)
 
 		err = c.finishPollingServiceInstance(instance)
 		if err != nil {

@@ -366,7 +366,9 @@ func (c *controller) reconcileServiceBroker(broker *v1alpha1.ServiceBroker) erro
 		if err := c.updateServiceBrokerCondition(broker, v1alpha1.ServiceBrokerConditionReady, v1alpha1.ConditionTrue, successFetchedCatalogReason, successFetchedCatalogMessage); err != nil {
 			return err
 		}
+
 		c.recorder.Event(broker, api.EventTypeNormal, successFetchedCatalogReason, successFetchedCatalogMessage)
+
 		return nil
 	}
 
@@ -379,6 +381,7 @@ func (c *controller) reconcileServiceBroker(broker *v1alpha1.ServiceBroker) erro
 		// Get ALL ServiceClasses. Remove those that reference this ServiceBroker.
 		svcClasses, err := c.serviceClassLister.List(labels.Everything())
 		if err != nil {
+			c.recorder.Eventf(broker, api.EventTypeWarning, errorListingServiceClassesReason, "%v %v", errorListingServiceClassesMessage, err)
 			if err := c.updateServiceBrokerCondition(
 				broker,
 				v1alpha1.ServiceBrokerConditionReady,
@@ -388,7 +391,6 @@ func (c *controller) reconcileServiceBroker(broker *v1alpha1.ServiceBroker) erro
 			); err != nil {
 				return err
 			}
-			c.recorder.Eventf(broker, api.EventTypeWarning, errorListingServiceClassesReason, "%v %v", errorListingServiceClassesMessage, err)
 			return err
 		}
 
@@ -446,6 +448,7 @@ func (c *controller) reconcileServiceBroker(broker *v1alpha1.ServiceBroker) erro
 						err,
 					)
 					glog.Warning(s)
+					c.recorder.Eventf(broker, api.EventTypeWarning, errorDeletingServiceClassReason, "%v %v", errorDeletingServiceClassMessage, s)
 					if err := c.updateServiceBrokerCondition(
 						broker,
 						v1alpha1.ServiceBrokerConditionReady,
@@ -455,7 +458,6 @@ func (c *controller) reconcileServiceBroker(broker *v1alpha1.ServiceBroker) erro
 					); err != nil {
 						return err
 					}
-					c.recorder.Eventf(broker, api.EventTypeWarning, errorDeletingServiceClassReason, "%v %v", errorDeletingServiceClassMessage, s)
 					return err
 				}
 			}
