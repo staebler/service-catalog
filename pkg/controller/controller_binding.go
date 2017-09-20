@@ -836,11 +836,11 @@ func (c *controller) recordStartOfServiceInstanceCredentialOperation(toUpdate *v
 	message := ""
 	switch operation {
 	case v1alpha1.ServiceInstanceCredentialOperationBind:
-		reason = bindingReason
-		message = bindingMessage
+		reason = bindingInFlightReason
+		message = bindingInFlightMessage
 	case v1alpha1.ServiceInstanceCredentialOperationUnbind:
-		reason = unbindingReason
-		message = unbindingMessage
+		reason = unbindingInFlightReason
+		message = unbindingInFlightMessage
 	}
 	c.setServiceInstanceCredentialCondition(
 		toUpdate,

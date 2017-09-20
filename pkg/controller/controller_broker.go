@@ -115,14 +115,14 @@ const (
 	asyncProvisioningMessage           string = "The instance is being provisioned asynchronously"
 	asyncDeprovisioningReason          string = "Deprovisioning"
 	asyncDeprovisioningMessage         string = "The instance is being deprovisioned asynchronously"
-	bindingReason                      string = "Binding"
-	bindingMessage                     string = "Binding the ServiceInstanceCredential"
-	unbindingReason                    string = "Unbinding"
-	unbindingMessage                   string = "Unbinding the ServiceInstanceCredential"
-	provisioningReason                 string = "Provisioning"
-	provisioningMessage                string = "Provisioning the ServiceInstance"
-	deprovisioningReason               string = "Deprovisioning"
-	deprovisioningMessage              string = "Deprovisioning the ServiceInstance"
+	bindingInFlightReason              string = "BindingRequestInFlight"
+	bindingInFlightMessage             string = "Binding request for ServiceInstanceCredential in-flight to Broker"
+	unbindingInFlightReason            string = "UnbindingRequestInFlight"
+	unbindingInFlightMessage           string = "Unbind request for ServiceInstanceCredential in-flight to Broker"
+	provisioningInFlightReason         string = "ProvisionRequestInFlight"
+	provisioningInFlightMessage        string = "Provision request for ServiceInstance in-flight to Broker"
+	deprovisioningInFlightReason       string = "DeprovisionRequestInFlight"
+	deprovisioningInFlightMessage      string = "Deprovision request for ServiceInstance in-flight to Broker"
 )
 
 // shouldReconcileServiceBroker determines whether a broker should be reconciled; it

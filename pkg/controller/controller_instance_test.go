@@ -308,7 +308,7 @@ func TestReconcileServiceInstanceWithParameters(t *testing.T) {
 	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedServiceInstance, provisioningReason)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, provisioningInFlightReason)
 	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationProvision)
 
 	assertGet(t, actions[1], instance)
@@ -447,7 +447,7 @@ func TestReconcileServiceInstanceWithProvisionCallFailure(t *testing.T) {
 	assertNumberOfActions(t, actions, 3)
 
 	updatedObject := assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedObject, provisioningReason)
+	assertServiceInstanceReadyFalse(t, updatedObject, provisioningInFlightReason)
 	assertServiceInstanceCurrentOperation(t, updatedObject, v1alpha1.ServiceInstanceOperationProvision)
 
 	assertGet(t, actions[1], instance)
@@ -527,7 +527,7 @@ func TestReconcileServiceInstanceWithProvisionFailure(t *testing.T) {
 	assertNumberOfActions(t, actions, 3)
 
 	updatedObject := assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedObject, provisioningReason)
+	assertServiceInstanceReadyFalse(t, updatedObject, provisioningInFlightReason)
 	assertServiceInstanceCurrentOperation(t, updatedObject, v1alpha1.ServiceInstanceOperationProvision)
 
 	assertGet(t, actions[1], instance)
@@ -614,7 +614,7 @@ func TestReconcileServiceInstance(t *testing.T) {
 	}
 
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedServiceInstance, provisioningReason)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, provisioningInFlightReason)
 	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationProvision)
 
 	assertGet(t, actions[1], instance)
@@ -689,7 +689,7 @@ func TestReconcileServiceInstanceAsynchronous(t *testing.T) {
 	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedServiceInstance, provisioningReason)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, provisioningInFlightReason)
 	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationProvision)
 
 	assertGet(t, actions[1], instance)
@@ -766,7 +766,7 @@ func TestReconcileServiceInstanceAsynchronousNoOperation(t *testing.T) {
 	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedServiceInstance, provisioningReason)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, provisioningInFlightReason)
 	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationProvision)
 
 	assertGet(t, actions[1], instance)
@@ -892,7 +892,7 @@ func TestReconcileServiceInstanceDelete(t *testing.T) {
 	assertNumberOfActions(t, actions, 5)
 
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedServiceInstance, deprovisioningReason)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, deprovisioningInFlightReason)
 	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationDeprovision)
 
 	assertGet(t, actions[1], instance)
@@ -1023,7 +1023,7 @@ func TestReconcileServiceInstanceDeleteBlockedByCredentials(t *testing.T) {
 	assertNumberOfActions(t, actions, 5)
 
 	updatedServiceInstance = assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedServiceInstance, deprovisioningReason)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, deprovisioningInFlightReason)
 	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationDeprovision)
 
 	assertGet(t, actions[1], instance)
@@ -1114,7 +1114,7 @@ func TestReconcileServiceInstanceDeleteAsynchronous(t *testing.T) {
 	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstance := assertUpdateStatus(t, actions[0], instance)
-	assertServiceInstanceReadyFalse(t, updatedServiceInstance, deprovisioningReason)
+	assertServiceInstanceReadyFalse(t, updatedServiceInstance, deprovisioningInFlightReason)
 	assertServiceInstanceCurrentOperation(t, updatedServiceInstance, v1alpha1.ServiceInstanceOperationDeprovision)
 
 	assertGet(t, actions[1], instance)
@@ -2122,6 +2122,7 @@ func TestReconcileServiceInstanceWithStatusUpdateError(t *testing.T) {
 	setUpFakeCatalogToReturnUpdatedServiceInstance(fakeCatalogClient)
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
+	sharedInformers.ServicePlans().Informer().GetStore().Add(getTestServicePlan())
 	instance := getTestServiceInstance()
 	fakeCatalogClient.AddReactor("update", "serviceinstances", func(action clientgotesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("update error")

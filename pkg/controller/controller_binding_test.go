@@ -211,7 +211,7 @@ func TestReconcileServiceInstanceCredentialWithSecretConflict(t *testing.T) {
 	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding).(*v1alpha1.ServiceInstanceCredential)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingReason)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingInFlightReason)
 	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
 
 	assertGet(t, actions[1], binding)
@@ -319,7 +319,7 @@ func TestReconcileServiceInstanceCredentialWithParameters(t *testing.T) {
 	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding).(*v1alpha1.ServiceInstanceCredential)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingReason)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingInFlightReason)
 	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
 
 	assertGet(t, actions[1], binding)
@@ -502,7 +502,7 @@ func TestReconcileServiceInstanceCredentialNonbindableServiceClassBindablePlan(t
 	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingReason)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingInFlightReason)
 	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
 
 	assertGet(t, actions[1], binding)
@@ -845,7 +845,7 @@ func TestReconcileServiceInstanceCredentialDelete(t *testing.T) {
 	assertNumberOfActions(t, actions, 5)
 
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, unbindingReason)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, unbindingInFlightReason)
 	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationUnbind)
 
 	assertGet(t, actions[1], binding)
@@ -1071,7 +1071,7 @@ func TestReconcileServiceInstanceCredentialDeleteFailedServiceInstanceCredential
 	assertNumberOfActions(t, actions, 5)
 
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, unbindingReason)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, unbindingInFlightReason)
 	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationUnbind)
 
 	assertGet(t, actions[1], binding)
@@ -1141,7 +1141,7 @@ func TestReconcileServiceInstanceCredentialWithServiceBrokerError(t *testing.T) 
 	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingReason)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingInFlightReason)
 	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
 
 	assertGet(t, actions[1], binding)
@@ -1207,7 +1207,7 @@ func TestReconcileServiceInstanceCredentialWithServiceBrokerHTTPError(t *testing
 	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingReason)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingInFlightReason)
 	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
 
 	assertGet(t, actions[1], binding)
@@ -1292,7 +1292,7 @@ func TestReconcileServiceInstanceCredentialWithServiceInstanceCredentialCallFail
 	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingReason)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingInFlightReason)
 	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
 
 	assertGet(t, actions[1], binding)
@@ -1364,7 +1364,7 @@ func TestReconcileServiceInstanceCredentialWithServiceInstanceCredentialFailure(
 	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding).(*v1alpha1.ServiceInstanceCredential)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingReason)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, bindingInFlightReason)
 	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationBind)
 
 	assertGet(t, actions[1], binding)
@@ -1596,7 +1596,7 @@ func TestReconcileUnbindingWithServiceBrokerError(t *testing.T) {
 	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, unbindingReason)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, unbindingInFlightReason)
 	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationUnbind)
 
 	assertGet(t, actions[1], binding)
@@ -1662,7 +1662,7 @@ func TestReconcileUnbindingWithServiceBrokerHTTPError(t *testing.T) {
 	assertNumberOfActions(t, actions, 3)
 
 	updatedServiceInstanceCredential := assertUpdateStatus(t, actions[0], binding)
-	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, unbindingReason)
+	assertServiceInstanceCredentialReadyFalse(t, updatedServiceInstanceCredential, unbindingInFlightReason)
 	assertServiceInstanceCredentialCurrentOperation(t, updatedServiceInstanceCredential, v1alpha1.ServiceInstanceCredentialOperationUnbind)
 
 	assertGet(t, actions[1], binding)
@@ -2012,6 +2012,7 @@ func TestReconcileServiceInstanceCredentialWithStatusUpdateError(t *testing.T) {
 	addGetSecretNotFoundReaction(fakeKubeClient)
 	sharedInformers.ServiceBrokers().Informer().GetStore().Add(getTestServiceBroker())
 	sharedInformers.ServiceClasses().Informer().GetStore().Add(getTestServiceClass())
+	sharedInformers.ServicePlans().Informer().GetStore().Add(getTestServicePlan())
 	sharedInformers.ServiceInstances().Informer().GetStore().Add(getTestServiceInstanceWithStatus(v1alpha1.ConditionTrue))
 	binding := getTestServiceInstanceCredential()
 	fakeCatalogClient.AddReactor("update", "serviceinstancecredentials", func(action clientgotesting.Action) (bool, runtime.Object, error) {

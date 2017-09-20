@@ -682,7 +682,6 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 	// passed back to the broker during polling of last_operation.
 	if response.Async {
 		glog.V(5).Infof("Received asynchronous provisioning response for ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v: response: %+v", instance.Namespace, instance.Name, serviceClass.Name, brokerName, response)
-		c.recorder.Eventf(instance, api.EventTypeNormal, asyncProvisioningReason, asyncProvisioningMessage)
 
 		if response.OperationKey != nil && *response.OperationKey != "" {
 			key := string(*response.OperationKey)
@@ -707,9 +706,10 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 		if err := c.beginPollingServiceInstance(instance); err != nil {
 			return err
 		}
+
+		c.recorder.Eventf(instance, api.EventTypeNormal, asyncProvisioningReason, asyncProvisioningMessage)
 	} else {
 		glog.V(5).Infof("Successfully provisioned ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v: response: %+v", instance.Namespace, instance.Name, serviceClass.Name, brokerName, response)
-		c.recorder.Eventf(instance, api.EventTypeNormal, successProvisionReason, successProvisionMessage)
 
 		c.clearServiceInstanceCurrentOperation(toUpdate)
 
@@ -724,6 +724,8 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 		if err := c.updateServiceInstanceStatus(toUpdate); err != nil {
 			return err
 		}
+
+		c.recorder.Eventf(instance, api.EventTypeNormal, successProvisionReason, successProvisionMessage)
 	}
 	return nil
 }
@@ -814,8 +816,6 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 		// this is considered a success as per the spec, so mark as deleted
 		// and remove any finalizers.
 		if osb.IsGoneError(err) && deleting {
-			c.recorder.Event(instance, api.EventTypeNormal, successDeprovisionReason, successDeprovisionMessage)
-
 			clone, err := api.Scheme.DeepCopy(instance)
 			if err != nil {
 				return err
@@ -841,6 +841,7 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 				}
 			}
 
+			c.recorder.Event(instance, api.EventTypeNormal, successDeprovisionReason, successDeprovisionMessage)
 			glog.V(5).Infof("Successfully deprovisioned ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v", instance.Namespace, instance.Name, serviceClass.Name, brokerName)
 
 			return c.finishPollingServiceInstance(instance)
@@ -1222,11 +1223,11 @@ func (c *controller) recordStartOfServiceInstanceOperation(toUpdate *v1alpha1.Se
 	message := ""
 	switch operation {
 	case v1alpha1.ServiceInstanceOperationProvision:
-		reason = provisioningReason
-		message = provisioningMessage
+		reason = provisioningInFlightReason
+		message = provisioningInFlightMessage
 	case v1alpha1.ServiceInstanceOperationDeprovision:
-		reason = deprovisioningReason
-		message = deprovisioningMessage
+		reason = deprovisioningInFlightReason
+		message = deprovisioningInFlightMessage
 	}
 	setServiceInstanceCondition(
 		toUpdate,
