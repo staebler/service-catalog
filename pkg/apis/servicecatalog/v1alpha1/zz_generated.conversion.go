@@ -701,6 +701,7 @@ func autoConvert_v1alpha1_ServiceInstanceSpec_To_servicecatalog_ServiceInstanceS
 	out.ParametersFrom = *(*[]servicecatalog.ParametersFromSource)(unsafe.Pointer(&in.ParametersFrom))
 	out.ExternalID = in.ExternalID
 	out.UserInfo = (*servicecatalog.UserInfo)(unsafe.Pointer(in.UserInfo))
+	out.UpdateRequests = in.UpdateRequests
 	return nil
 }
 
@@ -716,6 +717,7 @@ func autoConvert_servicecatalog_ServiceInstanceSpec_To_v1alpha1_ServiceInstanceS
 	out.ParametersFrom = *(*[]ParametersFromSource)(unsafe.Pointer(&in.ParametersFrom))
 	out.ExternalID = in.ExternalID
 	out.UserInfo = (*UserInfo)(unsafe.Pointer(in.UserInfo))
+	out.UpdateRequests = in.UpdateRequests
 	return nil
 }
 

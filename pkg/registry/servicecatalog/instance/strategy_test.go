@@ -60,44 +60,59 @@ func contextWithUserName(userName string) genericapirequest.Context {
 	return genericapirequest.WithUser(ctx, userInfo)
 }
 
-// TODO: Un-comment "spec-change" test case when there is a field
-// in the spec to which the reconciler allows a change.
-
 // TestInstanceUpdate tests that generation is incremented correctly when the
 // spec of a Instance is updated.
 func TestInstanceUpdate(t *testing.T) {
 	cases := []struct {
-		name                      string
-		older                     *servicecatalog.ServiceInstance
-		newer                     *servicecatalog.ServiceInstance
-		shouldGenerationIncrement bool
+		name             string
+		older            *servicecatalog.ServiceInstance
+		newer            *servicecatalog.ServiceInstance
+		shouldSpecUpdate bool
 	}{
 		{
 			name:  "no spec change",
 			older: getTestInstance(),
 			newer: getTestInstance(),
 		},
-		//		{
-		//			name:  "spec change",
-		//			older: getTestInstance(),
-		//			newer: func() *servicecatalog.ServiceInstance {
-		//				i := getTestInstance()
-		//				i.Spec.ServiceClassName = "new-serviceclass"
-		//				return i
-		//			},
-		//			shouldGenerationIncrement: true,
-		//		},
+		{
+			name: "spec change",
+			older: func() *servicecatalog.ServiceInstance {
+				i := getTestInstance()
+				i.Spec.UpdateRequests = 1
+				return i
+			}(),
+			newer: func() *servicecatalog.ServiceInstance {
+				i := getTestInstance()
+				i.Spec.UpdateRequests = 2
+				return i
+			}(),
+			shouldSpecUpdate: true,
+		},
 	}
 
 	for _, tc := range cases {
 		instanceRESTStrategies.PrepareForUpdate(nil, tc.newer, tc.older)
 
 		expectedGeneration := tc.older.Generation
-		if tc.shouldGenerationIncrement {
+		expectedReadyCondition := servicecatalog.ConditionTrue
+		if tc.shouldSpecUpdate {
 			expectedGeneration = expectedGeneration + 1
+			expectedReadyCondition = servicecatalog.ConditionFalse
 		}
 		if e, a := expectedGeneration, tc.newer.Generation; e != a {
 			t.Errorf("%v: expected %v, got %v for generation", tc.name, e, a)
+			continue
+		}
+		if e, a := 1, len(tc.newer.Status.Conditions); e != a {
+			t.Errorf("%v: unexpected number of conditions: expected %v, got %v", e, a)
+			continue
+		}
+		if e, a := servicecatalog.ServiceInstanceConditionReady, tc.newer.Status.Conditions[0].Type; e != a {
+			t.Errorf("%v: unexpected condition type: expected %v, got %v", e, a)
+			continue
+		}
+		if e, a := expectedReadyCondition, tc.newer.Status.Conditions[0].Status; e != a {
+			t.Errorf("%v: unexpected ready condition status: expected %v, got %v", e, a)
 		}
 	}
 }
@@ -118,17 +133,15 @@ func TestInstanceUserInfo(t *testing.T) {
 		t.Errorf("unexpected user info in created spec: expected %v, got %v", e, a)
 	}
 
-	// TODO: Un-comment the following portion of this test when there is a field
-	// in the spec to which the reconciler allows a change.
+	updaterUserName := "updater"
+	updatedInstance := getTestInstance()
+	updatedInstance.Spec.UpdateRequests = updatedInstance.Spec.UpdateRequests + 1
+	updateContext := contextWithUserName(updaterUserName)
+	instanceRESTStrategies.PrepareForUpdate(updateContext, updatedInstance, createdInstance)
 
-	//  updaterUserName := "updater"
-	//	updatedInstance := getTestInstance()
-	//	updateContext := contextWithUserName(updaterUserName)
-	//	instanceRESTStrategies.PrepareForUpdate(updateContext, updatedInstance, createdInstance)
-
-	//	if e, a := updaterUserName, updatedInstance.Spec.UserInfo.Username; e != a {
-	//		t.Errorf("unexpected user info in updated spec: expected %v, got %v", e, a)
-	//	}
+	if e, a := updaterUserName, updatedInstance.Spec.UserInfo.Username; e != a {
+		t.Errorf("unexpected user info in updated spec: expected %v, got %v", e, a)
+	}
 
 	deleterUserName := "deleter"
 	deletedInstance := getTestInstance()

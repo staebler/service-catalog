@@ -600,6 +600,40 @@ func testInstanceClient(sType server.StorageType, client servicecatalogclient.In
 		return fmt.Errorf("Didn't get back 'secondvalue' value for key 'second' in Values map was %+v", parameters)
 	}
 
+	// update the instance's spec
+	updateRequests = instanceServer.Spec.UpdateRequests + 1
+	expectedGeneration = instanceServer.Generation + 1
+	instanceServer.Spec.UpdateRequests = updateRequests
+
+	_, err = instanceClient.Update(instanceServer)
+	if err != nil {
+		return fmt.Errorf("Error updating instance: %v", err)
+	}
+
+	// re-fetch the instance by name and check its spec and condition
+	instanceServer, err = instanceClient.Get(name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("error getting instance (%s)", err)
+	}
+	if e, a := updateRequests, instanceServer.Spec.UpdateRequests; e != a {
+		return fmt.Errorf("unexpected UpdateRequests: expected: %v, got %v", e, a)
+	}
+	if e, a := expectedGeneration, instanceServer.Generation; e != a {
+		t.Errorf("unexpected generation: expected %v, got %v", tc.name, e, a)
+		continue
+	}
+	if e, a := 1, len(instanceServer.Status.Conditions); e != a {
+		t.Errorf("unexpected number of conditions: expected %v, got %v", e, a)
+		continue
+	}
+	if e, a := servicecatalog.ServiceInstanceConditionReady, instanceServer.Status.Conditions[0].Type; e != a {
+		t.Errorf("unexpected condition type: expected %v, got %v", e, a)
+		continue
+	}
+	if e, a := expectedReadyCondition, instanceServer cxxxxx x     x             dd  dd d d r r  r dre  r rr                 vb v cvfcx fbf.Status.Conditions[0].Status; e != a {
+		t.Errorf("unexpected ready condition status: expected %v, got %v", e, a)
+	}
+
 	// update the instance's conditions
 	readyConditionTrue := v1alpha1.ServiceInstanceCondition{
 		Type:    v1alpha1.ServiceInstanceConditionReady,

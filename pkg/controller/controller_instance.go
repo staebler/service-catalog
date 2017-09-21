@@ -630,9 +630,9 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 
 	var provisionRequest *osb.ProvisionRequest
 	var updateRequest *osb.UpdateInstanceRequest
-	provisionOrUpdateText = ""
-	provisionedOrUpdatedText = ""
-	provisiongOrUpdatingText = ""
+	provisionOrUpdateText := ""
+	provisionedOrUpdatedText := ""
+	provisioningOrUpdatingText := ""
 	if toUpdate.Generation == 1 {
 		// osb client handles whether or not to really send this based
 		// on the version of the client.
@@ -640,7 +640,7 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 			"platform":  brokerapi.ContextProfilePlatformKubernetes,
 			"namespace": instance.Namespace,
 		}
-		provisionRequest := &osb.ProvisionRequest{
+		provisionRequest = &osb.ProvisionRequest{
 			AcceptsIncomplete:   true,
 			InstanceID:          instance.Spec.ExternalID,
 			ServiceID:           serviceClass.ExternalID,
@@ -655,20 +655,17 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 		provisionedOrUpdatedText = "provisioned"
 		provisioningOrUpdatingText = "provisioning"
 	} else {
-		// Need to send an empty parameters map when the instance has no
-		// parameters. A nil value for parameters means that we are not making
-		// any changes to parameters.
-		requestParameters := parameters
-		if parameters == nil {
-			requestParameters = make(map[string]interface{})
-		}
-		updateRequest := &osb.UpdateInstanceRequest{
+		planID := servicePlan.ExternalID
+		updateRequest = &osb.UpdateInstanceRequest{
 			AcceptsIncomplete:   true,
 			InstanceID:          instance.Spec.ExternalID,
 			ServiceID:           serviceClass.ExternalID,
-			PlanID:              servicePlan.ExternalID,
-			Parameters:          requestParameters,
+			PlanID:              &planID,
 			OriginatingIdentity: originatingIdentity,
+		}
+		// Only send the parameters if they have changed from what the Broker has
+		if toUpdate.Status.InProgressProperties.ParametersChecksum != toUpdate.Status.ExternalProperties.ParametersChecksum {
+			updateRequest.Parameters = parameters
 		}
 		provisionOrUpdateText = "update"
 		provisionedOrUpdatedText = "updated"
@@ -733,7 +730,7 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 				v1alpha1.ServiceInstanceConditionReady,
 				v1alpha1.ConditionFalse,
 				reason,
-				fmt.Sprintf("ServiceBroker returned a failure for %v call; operation will not be retried: %v", provisionOrUpdateText, s)
+				fmt.Sprintf("ServiceBroker returned a failure for %v call; operation will not be retried: %v", provisionOrUpdateText, s))
 			c.clearServiceInstanceCurrentOperation(toUpdate)
 			return c.updateServiceInstanceStatus(toUpdate)
 		}
@@ -751,7 +748,7 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 			v1alpha1.ServiceInstanceConditionReady,
 			v1alpha1.ConditionFalse,
 			reason,
-			fmt.Sprintf("The call failed and will be retried: %v", provisionOrUpdateText, s)
+			fmt.Sprintf("The %v call failed and will be retried: %v", provisionOrUpdateText, s))
 
 		if !time.Now().Before(toUpdate.Status.OperationStartTime.Time.Add(c.reconciliationRetryDuration)) {
 			s := fmt.Sprintf(`Stopping reconciliation retries on ServiceInstance "%v/%v" because too much time has elapsed`, instance.Namespace, instance.Name)
@@ -783,10 +780,13 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 	// and we need to add it to the polling queue. ServiceBroker can
 	// optionally return 'Operation' that will then need to be
 	// passed back to the broker during polling of last_operation.
+	var response interface{}
 	async := false
 	if provisionResponse != nil {
+		response = provisionResponse
 		async = provisionResponse.Async
 	} else {
+		response = updateResponse
 		async = updateResponse.Async
 	}
 	if async {
@@ -1151,11 +1151,11 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 		}
 		actionText := ""
 		switch instance.Status.CurrentOperation {
-			case v1alpha1.ServiceInstanceOperationProvision:
+		case v1alpha1.ServiceInstanceOperationProvision:
 			actionText = "provisioning"
-			case v1alpha1.ServiceInstanceOperationUpdate:
+		case v1alpha1.ServiceInstanceOperationUpdate:
 			actionText = "updating"
-			case v1alpha1.ServiceInstanceOperationDeprovision:
+		case v1alpha1.ServiceInstanceOperationDeprovision:
 			actionText = "deprovisioning"
 		}
 		s := fmt.Sprintf("Error %s ServiceInstance \"%s/%s\" of ServiceClass %q at ServiceBroker %q: %q", actionText, instance.Namespace, instance.Name, serviceClass.Name, brokerName, description)
@@ -1172,13 +1172,13 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 		reason := ""
 		msg := ""
 		switch instance.Status.CurrentOperation {
-			case v1alpha1.ServiceInstanceOperationProvision:
+		case v1alpha1.ServiceInstanceOperationProvision:
 			reason = errorProvisionCallFailedReason
 			msg = "Provision call failed: " + s
-			case v1alpha1.ServiceInstanceOperationUpdate:
+		case v1alpha1.ServiceInstanceOperationUpdate:
 			reason = errorUpdateInstanceCallFailedReason
 			msg = "Update call failed: " + s
-			case v1alpha1.ServiceInstanceOperationDeprovision:
+		case v1alpha1.ServiceInstanceOperationDeprovision:
 			readyCond = v1alpha1.ConditionUnknown
 			reason = errorDeprovisionCalledReason
 			msg = "Deprovision call failed: " + s
@@ -1384,7 +1384,7 @@ func (c *controller) recordStartOfServiceInstanceOperation(toUpdate *v1alpha1.Se
 	case v1alpha1.ServiceInstanceOperationProvision:
 		reason = provisioningInFlightReason
 		message = provisioningInFlightMessage
-		case v1alpha1.ServiceInstanceOperationUpdate:
+	case v1alpha1.ServiceInstanceOperationUpdate:
 		reason = instanceUpdatingInFlightReason
 		message = instanceUpdatingInFlightMessage
 	case v1alpha1.ServiceInstanceOperationDeprovision:
@@ -1401,7 +1401,7 @@ func (c *controller) recordStartOfServiceInstanceOperation(toUpdate *v1alpha1.Se
 	if err := c.updateServiceInstanceStatus(toUpdate); err != nil {
 		return toUpdate, err
 	}
-	
+
 	// TODO: This re-fetch of the instance is not necessary in production as the call to update the
 	// status will update the instance. However, due to limitations of the fake catalog client, this
 	// fetch is necessary for the tests to work. The fake catalog client does not retain a copy of
