@@ -45,11 +45,11 @@ func internalValidateServiceInstance(instance *sc.ServiceInstance, create bool) 
 	allErrs = append(allErrs, apivalidation.ValidateObjectMeta(&instance.ObjectMeta, true, /*namespace*/
 		validateServiceInstanceName,
 		field.NewPath("metadata"))...)
-	allErrs = append(allErrs, validateServiceInstanceSpec(&instance.Spec, field.NewPath("Spec"), create)...)
-	allErrs = append(allErrs, validateServiceInstanceStatus(&instance.Status, field.NewPath("Status"), create)...)
+	allErrs = append(allErrs, validateServiceInstanceSpec(&instance.Spec, field.NewPath("spec"), create)...)
+	allErrs = append(allErrs, validateServiceInstanceStatus(&instance.Status, field.NewPath("status"), create)...)
 	if instance.Status.ReconciledGeneration == instance.Generation {
 		if instance.Status.CurrentOperation != "" {
-			allErrs = append(allErrs, field.Forbidden(field.NewPath("Status").Child("currentOperation"), "currentOperation must not be present when reconciledGeneration and generation are the same"))
+			allErrs = append(allErrs, field.Forbidden(field.NewPath("status").Child("currentOperation"), "currentOperation must not be present when reconciledGeneration and generation are the same"))
 		}
 	}
 	return allErrs
@@ -97,6 +97,8 @@ func validateServiceInstanceSpec(spec *sc.ServiceInstanceSpec, fldPath *field.Pa
 		}
 	}
 
+	allErrs = append(allErrs, apivalidation.ValidateNonnegativeField(spec.UpdateRequests, fldPath.Child("updateRequests"))...)
+
 	return allErrs
 }
 
@@ -130,7 +132,7 @@ func validateServiceInstanceStatus(status *sc.ServiceInstanceStatus, fldPath *fi
 		// Do not allow the instance to be ready if there is an on-going operation
 		for i, c := range status.Conditions {
 			if c.Type == sc.ServiceInstanceConditionReady && c.Status == sc.ConditionTrue {
-				allErrs = append(allErrs, field.Forbidden(fldPath.Child("Conditions").Index(i), "Can not set ServiceInstanceConditionReady to true when there is an operation in progress"))
+				allErrs = append(allErrs, field.Forbidden(fldPath.Child("conditions").Index(i), "Can not set ServiceInstanceConditionReady to true when there is an operation in progress"))
 			}
 		}
 	}
@@ -195,7 +197,7 @@ func validateServiceInstancePropertiesState(propertiesState *sc.ServiceInstanceP
 func internalValidateServiceInstanceUpdateAllowed(new *sc.ServiceInstance, old *sc.ServiceInstance) field.ErrorList {
 	errors := field.ErrorList{}
 	if old.Status.AsyncOpInProgress {
-		errors = append(errors, field.Forbidden(field.NewPath("Spec"), "Another operation for this service instance is in progress"))
+		errors = append(errors, field.Forbidden(field.NewPath("spec"), "Another operation for this service instance is in progress"))
 	}
 	return errors
 }
@@ -203,8 +205,17 @@ func internalValidateServiceInstanceUpdateAllowed(new *sc.ServiceInstance, old *
 // ValidateServiceInstanceUpdate validates a change to the Instance's spec.
 func ValidateServiceInstanceUpdate(new *sc.ServiceInstance, old *sc.ServiceInstance) field.ErrorList {
 	allErrs := field.ErrorList{}
+
 	allErrs = append(allErrs, internalValidateServiceInstanceUpdateAllowed(new, old)...)
 	allErrs = append(allErrs, internalValidateServiceInstance(new, false)...)
+
+	allErrs = append(allErrs, apivalidation.ValidateImmutableField(new.Spec.ServiceClassName, old.Spec.ServiceClassName, field.NewPath("spec").Child("serviceClassName"))...)
+	allErrs = append(allErrs, apivalidation.ValidateImmutableField(new.Spec.ExternalID, old.Spec.ExternalID, field.NewPath("spec").Child("externalID"))...)
+
+	if new.Spec.UpdateRequests < old.Spec.UpdateRequests {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec").Child("updateRequests"), old.Spec.UpdateRequests, "new updateRequests value must not be less than the old one"))
+	}
+
 	return allErrs
 }
 

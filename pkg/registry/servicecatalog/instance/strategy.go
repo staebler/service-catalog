@@ -134,18 +134,8 @@ func (instanceRESTStrategy) PrepareForUpdate(ctx genericapirequest.Context, new,
 	// Do not allow any updates to the Status field while updating the Spec
 	newServiceInstance.Status = oldServiceInstance.Status
 
-	// TODO: We currently don't handle any changes to the spec in the
-	// reconciler. Once we do that, this check needs to be removed and
-	// proper validation of allowed changes needs to be implemented in
-	// ValidateUpdate. Also, the check for whether the generation needs
-	// to be updated needs to be un-commented.
-	newServiceInstance.Spec = oldServiceInstance.Spec
-
 	// Spec updates bump the generation so that we can distinguish between
 	// spec changes and other changes to the object.
-	//
-	// Note that since we do not currently handle any changes to the spec,
-	// the generation will never be incremented
 	if !apiequality.Semantic.DeepEqual(oldServiceInstance.Spec, newServiceInstance.Spec) {
 		if utilfeature.DefaultFeatureGate.Enabled(scfeatures.OriginatingIdentity) {
 			setServiceInstanceUserInfo(newServiceInstance, ctx)

@@ -605,25 +605,9 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 		UserInfo:           instance.Spec.UserInfo,
 	}
 
-	request := &osb.ProvisionRequest{
-		AcceptsIncomplete: true,
-		InstanceID:        instance.Spec.ExternalID,
-		ServiceID:         serviceClass.ExternalID,
-		PlanID:            servicePlan.ExternalID,
-		Parameters:        parameters,
-		OrganizationGUID:  string(ns.UID),
-		SpaceGUID:         string(ns.UID),
-	}
-
-	// osb client handles whether or not to really send this based
-	// on the version of the client.
-	request.Context = map[string]interface{}{
-		"platform":  brokerapi.ContextProfilePlatformKubernetes,
-		"namespace": instance.Namespace,
-	}
-
+	var originatingIdentity *osb.AlphaOriginatingIdentity
 	if utilfeature.DefaultFeatureGate.Enabled(scfeatures.OriginatingIdentity) {
-		originatingIdentity, err := buildOriginatingIdentity(instance.Spec.UserInfo)
+		originatingIdentity, err = buildOriginatingIdentity(instance.Spec.UserInfo)
 		if err != nil {
 			s := fmt.Sprintf(`Error building originating identity headers for provisioning ServiceInstance "%v/%v": %v`, instance.Namespace, instance.Name, err)
 			glog.Warning(s)
@@ -642,13 +626,63 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 
 			return err
 		}
-		request.OriginatingIdentity = originatingIdentity
+	}
+
+	var provisionRequest *osb.ProvisionRequest
+	var updateRequest *osb.UpdateInstanceRequest
+	provisionOrUpdateText = ""
+	provisionedOrUpdatedText = ""
+	provisiongOrUpdatingText = ""
+	if toUpdate.Generation == 1 {
+		// osb client handles whether or not to really send this based
+		// on the version of the client.
+		requestContext := map[string]interface{}{
+			"platform":  brokerapi.ContextProfilePlatformKubernetes,
+			"namespace": instance.Namespace,
+		}
+		provisionRequest := &osb.ProvisionRequest{
+			AcceptsIncomplete:   true,
+			InstanceID:          instance.Spec.ExternalID,
+			ServiceID:           serviceClass.ExternalID,
+			PlanID:              servicePlan.ExternalID,
+			Parameters:          parameters,
+			OrganizationGUID:    string(ns.UID),
+			SpaceGUID:           string(ns.UID),
+			Context:             requestContext,
+			OriginatingIdentity: originatingIdentity,
+		}
+		provisionOrUpdateText = "provision"
+		provisionedOrUpdatedText = "provisioned"
+		provisioningOrUpdatingText = "provisioning"
+	} else {
+		// Need to send an empty parameters map when the instance has no
+		// parameters. A nil value for parameters means that we are not making
+		// any changes to parameters.
+		requestParameters := parameters
+		if parameters == nil {
+			requestParameters = make(map[string]interface{})
+		}
+		updateRequest := &osb.UpdateInstanceRequest{
+			AcceptsIncomplete:   true,
+			InstanceID:          instance.Spec.ExternalID,
+			ServiceID:           serviceClass.ExternalID,
+			PlanID:              servicePlan.ExternalID,
+			Parameters:          requestParameters,
+			OriginatingIdentity: originatingIdentity,
+		}
+		provisionOrUpdateText = "update"
+		provisionedOrUpdatedText = "updated"
+		provisioningOrUpdatingText = "updating"
 	}
 
 	if toUpdate.Status.CurrentOperation == "" {
-		toUpdate, err = c.recordStartOfServiceInstanceOperation(toUpdate, v1alpha1.ServiceInstanceOperationProvision)
+		currentOperation := v1alpha1.ServiceInstanceOperationProvision
+		if updateRequest != nil {
+			currentOperation = v1alpha1.ServiceInstanceOperationUpdate
+		}
+		toUpdate, err = c.recordStartOfServiceInstanceOperation(toUpdate, currentOperation)
 		if err != nil {
-			s := fmt.Sprintf(`Error recording current operation for provisioning of ServiceInstance "%v/%v": %v`, instance.Namespace, instance.Name, err)
+			s := fmt.Sprintf(`Error recording current operation for %s of ServiceInstance "%v/%v": %v`, provisioningOrUpdatingText, instance.Namespace, instance.Name, err)
 			glog.Warning(s)
 			c.recorder.Event(instance, api.EventTypeWarning, errorRecordingCurrentOperationReason, s)
 			if err := c.updateServiceInstanceCondition(
@@ -664,18 +698,29 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 		}
 	}
 
-	glog.V(4).Infof("Provisioning a new ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v", instance.Namespace, instance.Name, serviceClass.Name, brokerName)
-	response, err := brokerClient.ProvisionInstance(request)
+	var provisionResponse *osb.ProvisionResponse
+	var updateResponse *osb.UpdateInstanceResponse
+	if provisionRequest != nil {
+		glog.V(4).Infof("Provisioning a new ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v", instance.Namespace, instance.Name, serviceClass.Name, brokerName)
+		provisionResponse, err = brokerClient.ProvisionInstance(provisionRequest)
+	} else {
+		glog.V(4).Infof("Updating ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v", instance.Namespace, instance.Name, serviceClass.Name, brokerName)
+		updateResponse, err = brokerClient.UpdateInstance(updateRequest)
+	}
 	if err != nil {
 		// There are two buckets of errors to handle:
 		// 1.  Errors that represent a failure response from the broker
 		// 2.  All other errors
 		if httpErr, ok := osb.IsHTTPError(err); ok {
+			reason := errorProvisionCallFailedReason
+			if updateRequest != nil {
+				reason = errorUpdateInstanceCallFailedReason
+			}
 			// An error from the broker represents a permanent failure and
 			// should not be retried; set the Failed condition.
-			s := fmt.Sprintf("Error provisioning ServiceInstance \"%s/%s\" of ServiceClass %q at ServiceBroker %q: %s", instance.Namespace, instance.Name, serviceClass.Name, brokerName, httpErr)
+			s := fmt.Sprintf("Error %v ServiceInstance \"%s/%s\" of ServiceClass %q at ServiceBroker %q: %s", provisioningOrUpdatingText, instance.Namespace, instance.Name, serviceClass.Name, brokerName, httpErr)
 			glog.Warning(s)
-			c.recorder.Event(instance, api.EventTypeWarning, errorProvisionCallFailedReason, s)
+			c.recorder.Event(instance, api.EventTypeWarning, reason, s)
 
 			setServiceInstanceCondition(
 				toUpdate,
@@ -687,22 +732,26 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 				toUpdate,
 				v1alpha1.ServiceInstanceConditionReady,
 				v1alpha1.ConditionFalse,
-				errorProvisionCallFailedReason,
-				"ServiceBroker returned a failure for provision call; operation will not be retried: "+s)
+				reason,
+				fmt.Sprintf("ServiceBroker returned a failure for %v call; operation will not be retried: %v", provisionOrUpdateText, s)
 			c.clearServiceInstanceCurrentOperation(toUpdate)
 			return c.updateServiceInstanceStatus(toUpdate)
 		}
 
-		s := fmt.Sprintf("Error provisioning ServiceInstance \"%s/%s\" of ServiceClass %q at ServiceBroker %q: %s", instance.Namespace, instance.Name, serviceClass.Name, brokerName, err)
+		reason := errorErrorCallingProvisionReason
+		if updateRequest != nil {
+			reason = errorErrorCallingUpdateInstanceReason
+		}
+		s := fmt.Sprintf("Error %v ServiceInstance \"%s/%s\" of ServiceClass %q at ServiceBroker %q: %s", provisioningOrUpdatingText, instance.Namespace, instance.Name, serviceClass.Name, brokerName, err)
 		glog.Warning(s)
-		c.recorder.Event(instance, api.EventTypeWarning, errorErrorCallingProvisionReason, s)
+		c.recorder.Event(instance, api.EventTypeWarning, reason, s)
 
 		setServiceInstanceCondition(
 			toUpdate,
 			v1alpha1.ServiceInstanceConditionReady,
 			v1alpha1.ConditionFalse,
-			errorErrorCallingProvisionReason,
-			"Provision call failed and will be retried: "+s)
+			reason,
+			fmt.Sprintf("The call failed and will be retried: %v", provisionOrUpdateText, s)
 
 		if !time.Now().Before(toUpdate.Status.OperationStartTime.Time.Add(c.reconciliationRetryDuration)) {
 			s := fmt.Sprintf(`Stopping reconciliation retries on ServiceInstance "%v/%v" because too much time has elapsed`, instance.Namespace, instance.Name)
@@ -724,8 +773,8 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 		return err
 	}
 
-	if response.DashboardURL != nil && *response.DashboardURL != "" {
-		url := *response.DashboardURL
+	if provisionResponse != nil && provisionResponse.DashboardURL != nil && *provisionResponse.DashboardURL != "" {
+		url := *provisionResponse.DashboardURL
 		toUpdate.Status.DashboardURL = &url
 	}
 
@@ -734,11 +783,23 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 	// and we need to add it to the polling queue. ServiceBroker can
 	// optionally return 'Operation' that will then need to be
 	// passed back to the broker during polling of last_operation.
-	if response.Async {
-		glog.V(5).Infof("Received asynchronous provisioning response for ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v: response: %+v", instance.Namespace, instance.Name, serviceClass.Name, brokerName, response)
+	async := false
+	if provisionResponse != nil {
+		async = provisionResponse.Async
+	} else {
+		async = updateResponse.Async
+	}
+	if async {
+		glog.V(5).Infof("Received asynchronous %v response for ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v: response: %+v", provisioningOrUpdatingText, instance.Namespace, instance.Name, serviceClass.Name, brokerName, response)
 
-		if response.OperationKey != nil && *response.OperationKey != "" {
-			key := string(*response.OperationKey)
+		var operationKey *osb.OperationKey
+		if provisionResponse != nil {
+			operationKey = provisionResponse.OperationKey
+		} else {
+			operationKey = updateResponse.OperationKey
+		}
+		if operationKey != nil && *operationKey != "" {
+			key := string(*operationKey)
 			toUpdate.Status.LastOperation = &key
 		}
 
@@ -746,12 +807,18 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 		// no other operations against it can start.
 		toUpdate.Status.AsyncOpInProgress = true
 
+		reason := asyncProvisioningReason
+		message := asyncProvisioningMessage
+		if updateResponse != nil {
+			reason = asyncUpdatingInstanceReason
+			message = asyncUpdatingInstanceMessage
+		}
 		setServiceInstanceCondition(
 			toUpdate,
 			v1alpha1.ServiceInstanceConditionReady,
 			v1alpha1.ConditionFalse,
-			asyncProvisioningReason,
-			asyncProvisioningMessage,
+			reason,
+			message,
 		)
 		if err := c.updateServiceInstanceStatus(toUpdate); err != nil {
 			return err
@@ -761,9 +828,15 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 			return err
 		}
 
-		c.recorder.Eventf(instance, api.EventTypeNormal, asyncProvisioningReason, asyncProvisioningMessage)
+		c.recorder.Eventf(instance, api.EventTypeNormal, reason, message)
 	} else {
-		glog.V(5).Infof("Successfully provisioned ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v: response: %+v", instance.Namespace, instance.Name, serviceClass.Name, brokerName, response)
+		reason := successProvisionReason
+		message := successProvisionMessage
+		if updateResponse != nil {
+			reason = successUpdateInstanceReason
+			reason = successUpdateInstanceMessage
+		}
+		glog.V(5).Infof("Successfully %v ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v: response: %+v", provisionedOrUpdatedText, instance.Namespace, instance.Name, serviceClass.Name, brokerName, response)
 
 		toUpdate.Status.ExternalProperties = toUpdate.Status.InProgressProperties
 		c.clearServiceInstanceCurrentOperation(toUpdate)
@@ -773,14 +846,14 @@ func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance
 			toUpdate,
 			v1alpha1.ServiceInstanceConditionReady,
 			v1alpha1.ConditionTrue,
-			successProvisionReason,
-			successProvisionMessage,
+			reason,
+			message,
 		)
 		if err := c.updateServiceInstanceStatus(toUpdate); err != nil {
 			return err
 		}
 
-		c.recorder.Eventf(instance, api.EventTypeNormal, successProvisionReason, successProvisionMessage)
+		c.recorder.Eventf(instance, api.EventTypeNormal, reason, message)
 	}
 	return nil
 }
@@ -796,14 +869,6 @@ func (c *controller) pollServiceInstanceInternal(instance *v1alpha1.ServiceInsta
 }
 
 func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, servicePlan *v1alpha1.ServicePlan, brokerName string, brokerClient osb.Client, instance *v1alpha1.ServiceInstance) error {
-	// There are some conditions that are different if we're
-	// deleting, this is more readable than checking the
-	// timestamps in various places.
-	deleting := false
-	if instance.DeletionTimestamp != nil {
-		deleting = true
-	}
-
 	// OperationStartTime must be set because we are polling an in-progress
 	// operation. If it is not set, this is a logical error. Let's bail out.
 	if instance.Status.OperationStartTime == nil {
@@ -870,7 +935,7 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 		// If the operation was for delete and we receive a http.StatusGone,
 		// this is considered a success as per the spec, so mark as deleted
 		// and remove any finalizers.
-		if osb.IsGoneError(err) && deleting {
+		if osb.IsGoneError(err) && instance.Status.CurrentOperation == v1alpha1.ServiceInstanceOperationDeprovision {
 			clone, err := api.Scheme.DeepCopy(instance)
 			if err != nil {
 				return err
@@ -963,12 +1028,16 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 
 			var message string
 			var reason string
-			if deleting {
+			switch instance.Status.CurrentOperation {
+			case v1alpha1.ServiceInstanceOperationDeprovision:
 				reason = asyncDeprovisioningReason
 				message = asyncDeprovisioningMessage
-			} else {
+			case v1alpha1.ServiceInstanceOperationProvision:
 				reason = asyncProvisioningReason
 				message = asyncProvisioningMessage
+			case v1alpha1.ServiceInstanceOperationUpdate:
+				reason = asyncUpdatingInstanceReason
+				message = asyncUpdatingInstanceMessage
 			}
 
 			if response.Description != nil {
@@ -1025,7 +1094,8 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 
 		// If we were asynchronously deleting a Service Instance, finish
 		// the finalizers.
-		if deleting {
+		switch instance.Status.CurrentOperation {
+		case v1alpha1.ServiceInstanceOperationDeprovision:
 			err := c.updateServiceInstanceCondition(
 				toUpdate,
 				v1alpha1.ServiceInstanceConditionReady,
@@ -1048,13 +1118,23 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 			c.recorder.Event(instance, api.EventTypeNormal, successDeprovisionReason, successDeprovisionMessage)
 
 			glog.V(5).Infof("Successfully deprovisioned ServiceInstance %v/%v of ServiceClass %v at ServiceBroker %v", instance.Namespace, instance.Name, serviceClass.Name, brokerName)
-		} else {
+		case v1alpha1.ServiceInstanceOperationProvision:
 			if err := c.updateServiceInstanceCondition(
 				toUpdate,
 				v1alpha1.ServiceInstanceConditionReady,
 				v1alpha1.ConditionTrue,
 				successProvisionReason,
 				successProvisionMessage,
+			); err != nil {
+				return err
+			}
+		case v1alpha1.ServiceInstanceOperationUpdate:
+			if err := c.updateServiceInstanceCondition(
+				toUpdate,
+				v1alpha1.ServiceInstanceConditionReady,
+				v1alpha1.ConditionTrue,
+				successUpdateInstanceReason,
+				successUpdateInstanceMessage,
 			); err != nil {
 				return err
 			}
@@ -1069,7 +1149,16 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 		if response.Description != nil {
 			description = *response.Description
 		}
-		s := fmt.Sprintf("Error deprovisioning ServiceInstance \"%s/%s\" of ServiceClass %q at ServiceBroker %q: %q", instance.Namespace, instance.Name, serviceClass.Name, brokerName, description)
+		actionText := ""
+		switch instance.Status.CurrentOperation {
+			case v1alpha1.ServiceInstanceOperationProvision:
+			actionText = "provisioning"
+			case v1alpha1.ServiceInstanceOperationUpdate:
+			actionText = "updating"
+			case v1alpha1.ServiceInstanceOperationDeprovision:
+			actionText = "deprovisioning"
+		}
+		s := fmt.Sprintf("Error %s ServiceInstance \"%s/%s\" of ServiceClass %q at ServiceBroker %q: %q", actionText, instance.Namespace, instance.Name, serviceClass.Name, brokerName, description)
 		c.recorder.Event(instance, api.EventTypeWarning, errorDeprovisionCalledReason, s)
 
 		clone, err := api.Scheme.DeepCopy(instance)
@@ -1080,12 +1169,19 @@ func (c *controller) pollServiceInstance(serviceClass *v1alpha1.ServiceClass, se
 		c.clearServiceInstanceCurrentOperation(toUpdate)
 
 		readyCond := v1alpha1.ConditionFalse
-		reason := errorProvisionCallFailedReason
-		msg := "Provision call failed: " + s
-		if deleting {
+		reason := ""
+		msg := ""
+		switch instance.Status.CurrentOperation {
+			case v1alpha1.ServiceInstanceOperationProvision:
+			reason = errorProvisionCallFailedReason
+			msg = "Provision call failed: " + s
+			case v1alpha1.ServiceInstanceOperationUpdate:
+			reason = errorUpdateInstanceCallFailedReason
+			msg = "Update call failed: " + s
+			case v1alpha1.ServiceInstanceOperationDeprovision:
 			readyCond = v1alpha1.ConditionUnknown
 			reason = errorDeprovisionCalledReason
-			msg = "Deprovision call failed:" + s
+			msg = "Deprovision call failed: " + s
 		}
 		setServiceInstanceCondition(
 			toUpdate,
@@ -1268,6 +1364,16 @@ func (c *controller) updateServiceInstanceFinalizers(
 	return err
 }
 
+// recordStartOfServiceInstanceOperation updates the instance to indicate that
+// there is a current operation being performed. The Status of the instance
+// is recorded in the registry.
+// params:
+// toUpdate - a modifiable copy of the instance in the registry to update
+// operation - operation that is being performed on the instance
+// returns:
+// 1 - a modifiable copy of the updated instance in the registry; or toUpdate
+//     if there was an error
+// 2 - any error that occurred
 func (c *controller) recordStartOfServiceInstanceOperation(toUpdate *v1alpha1.ServiceInstance, operation v1alpha1.ServiceInstanceOperation) (*v1alpha1.ServiceInstance, error) {
 	toUpdate.Status.CurrentOperation = operation
 	now := metav1.Now()
@@ -1278,6 +1384,9 @@ func (c *controller) recordStartOfServiceInstanceOperation(toUpdate *v1alpha1.Se
 	case v1alpha1.ServiceInstanceOperationProvision:
 		reason = provisioningInFlightReason
 		message = provisioningInFlightMessage
+		case v1alpha1.ServiceInstanceOperationUpdate:
+		reason = instanceUpdatingInFlightReason
+		message = instanceUpdatingInFlightMessage
 	case v1alpha1.ServiceInstanceOperationDeprovision:
 		reason = deprovisioningInFlightReason
 		message = deprovisioningInFlightMessage
@@ -1292,8 +1401,12 @@ func (c *controller) recordStartOfServiceInstanceOperation(toUpdate *v1alpha1.Se
 	if err := c.updateServiceInstanceStatus(toUpdate); err != nil {
 		return toUpdate, err
 	}
-	// Get the latest version of the instance so that we can avoid
-	// conflicts on our subsequent updates
+	
+	// TODO: This re-fetch of the instance is not necessary in production as the call to update the
+	// status will update the instance. However, due to limitations of the fake catalog client, this
+	// fetch is necessary for the tests to work. The fake catalog client does not retain a copy of
+	// the instance, so any further updates to the instance will be reflected in the object that the
+	// fake catalog client stores.
 	instance, err := c.serviceCatalogClient.ServiceInstances(toUpdate.Namespace).Get(toUpdate.Name, metav1.GetOptions{})
 	if err != nil {
 		return toUpdate, err
@@ -1309,6 +1422,9 @@ func (c *controller) recordStartOfServiceInstanceOperation(toUpdate *v1alpha1.Se
 	return clone.(*v1alpha1.ServiceInstance), nil
 }
 
+// clearServiceInstanceCurrentOperation sets the fields of the instance's Status
+// to indicate that there is no current operation being performed. The Status
+// is *not* recorded in the registry.
 func (c *controller) clearServiceInstanceCurrentOperation(toUpdate *v1alpha1.ServiceInstance) {
 	toUpdate.Status.CurrentOperation = ""
 	toUpdate.Status.OperationStartTime = nil
