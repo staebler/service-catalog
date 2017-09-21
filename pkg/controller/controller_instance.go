@@ -436,7 +436,7 @@ func isServiceInstanceFailed(instance *v1alpha1.ServiceInstance) bool {
 }
 
 // reconcileServiceInstance is the control-loop for reconciling Instances. An
-// error is returned to indicate that the binding has not been fully
+// error is returned to indicate that the instance has not been fully
 // processed and should be resubmitted at a later time.
 func (c *controller) reconcileServiceInstance(instance *v1alpha1.ServiceInstance) error {
 	// Currently, we only set a failure condition if the initial provision
@@ -1241,15 +1241,15 @@ func (c *controller) recordStartOfServiceInstanceOperation(toUpdate *v1alpha1.Se
 	}
 	// Get the latest version of the instance so that we can avoid
 	// conflicts on our subsequent updates
-	binding, err := c.serviceCatalogClient.ServiceInstances(toUpdate.Namespace).Get(toUpdate.Name, metav1.GetOptions{})
+	instance, err := c.serviceCatalogClient.ServiceInstances(toUpdate.Namespace).Get(toUpdate.Name, metav1.GetOptions{})
 	if err != nil {
 		return toUpdate, err
 	}
 	// Check to make sure that update has been stored
-	if binding.Status.CurrentOperation != operation {
-		return toUpdate, fmt.Errorf("current operation update is not recorded yet: operation=%v", binding.Status.CurrentOperation)
+	if instance.Status.CurrentOperation != operation {
+		return toUpdate, fmt.Errorf("current operation update is not recorded yet: operation=%v", instance.Status.CurrentOperation)
 	}
-	clone, err := api.Scheme.DeepCopy(binding)
+	clone, err := api.Scheme.DeepCopy(instance)
 	if err != nil {
 		return toUpdate, err
 	}
